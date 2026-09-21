@@ -26,6 +26,7 @@ FinishMessage=XieXin 安装完成。
 FriendlyName=XieXin 安装程序
 FILE0="XieXin.exe"
 FILE1="install.cmd"
+FILE2="WebView2Loader.dll"
 
 [SourceFiles]
 SourceFiles0=.
@@ -33,3 +34,4 @@ SourceFiles0=.
 [SourceFiles0]
 %FILE0%=
 %FILE1%=
+%FILE2%=
