@@ -1365,7 +1365,13 @@ export function openHelp() {
         <div class="kv"><span class="k">名称</span><span>写心 · HeartWrite</span></div>
         <div class="kv"><span class="k">版本</span><span>0.1.0</span></div>
         <div class="kv"><span class="k">技术栈</span><span>Rust + Tauri 2 + WebView2（原生桌面应用）</span></div>
+        <div class="kv"><span class="k">许可证</span><span>GPL-3.0 · 修改后分发须同样开源</span></div>
         <div class="kv"><span class="k">本次会话新增</span><span>${state.sessionChars.toLocaleString()} 字</span></div>
+      </div>
+      <div style="font-size:12.5px;line-height:1.9;color:var(--ink-soft);margin-top:10px">
+        写心是自由软件，采用 GPL-3.0：你可以随意使用、修改与再发布，
+        但分发修改后的版本时必须一并公开完整源码。<br/>
+        这不会影响你写出来的作品——小说版权完全属于你自己。
       </div>`,
     footer: '<button class="primary" data-role="ok">知道了</button>',
     onMount(b, f) { f.querySelector('[data-role="ok"]').onclick = closeModal; },
