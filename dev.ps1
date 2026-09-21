@@ -55,6 +55,6 @@ switch ($Task) {
     & $exe --smoke-test --data-dir (Join-Path $ws '.smoke-data')
     exit $LASTEXITCODE
   }
-  'release' { cargo build --release --manifest-path $manifest }
+  'release' { cargo tauri build --config src-tauri\tauri.conf.json }
   'clean'   { cargo clean --manifest-path $manifest }
 }
