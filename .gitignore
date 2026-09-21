@@ -1,0 +1,19 @@
+# Rust build output
+target/
+src-tauri/target/
+
+# Local Rust toolchains and bundled build tools
+.cargo/
+.rustup/
+.tooling/mingw/
+.tooling/*.exe
+
+# Local environment and editor files
+.env
+.env.*
+.vscode/
+.idea/
+
+# OS metadata
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,32 @@
+[package]
+name = "novel-manager"
+version = "0.1.0"
+description = "墨阁 · 本地小说写作管理器"
+authors = ["Novel Manager"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "novel_manager_lib"
+# 仅桌面端：不需要 cdylib/staticlib，避免 GNU ld 生成导出序号时溢出
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.6", features = ["image-png"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+chrono = { version = "0.4.45", features = ["serde"] }
+uuid = { version = "1.26.1", features = ["v4", "serde"] }
+rfd = "0.17.2"
+walkdir = "2.5.0"
+encoding_rs = "0.8.41"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>写心 · 小说写作工作台</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app" class="app no-anim" data-sidebar="open" data-inspector="open" data-focus="off" data-hasbook="no">
+    <!-- ================= 左侧边栏 ================= -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-top">
+        <button class="book-switch" id="bookSwitch" title="切换 / 新建书籍">
+          <span class="book-dot" id="bookDot"></span>
+          <span class="book-switch-text">
+            <strong id="bookTitleLabel">未选择书籍</strong>
+            <small id="bookMetaLabel">点击选择或新建作品</small>
+          </span>
+          <span class="chev">▾</span>
+        </button>
+        <button class="icon-btn" id="openSettings" title="设置">⚙</button>
+      </div>
+
+      <div class="sidebar-tools">
+        <div class="tool-row">
+          <button class="mini" id="addVolume" title="新增一卷">＋卷</button>
+          <button class="mini" id="addChapter" title="新增一章">＋章</button>
+          <input class="mini-input" id="tocFilter" type="search" placeholder="搜索章节…" />
+        </div>
+        <div class="toc-stats" id="tocStats">卷 0 · 章 0</div>
+      </div>
+
+      <div class="toc" id="toc" tabindex="0"></div>
+
+      <div class="sidebar-bottom" id="sidebarBottom" data-collapsed="false">
+        <button class="bottom-toggle" id="toggleBottom" title="展开 / 收起功能面板">
+          <span class="bottom-toggle-label">功能面板</span>
+          <span class="bottom-toggle-caret" id="bottomCaret">▾</span>
+        </button>
+        <div class="bottom-body" id="bottomBody">
+          <div class="bottom-grid">
+            <button class="chip" data-action="new-book" title="新建书籍">新建书</button>
+            <button class="chip" data-action="new-volume" title="新增卷">新增卷</button>
+            <button class="chip" data-action="new-chapter" title="新增章">新增章</button>
+            <button class="chip" data-action="search" title="全文搜索 Ctrl+F">全文搜索</button>
+            <button class="chip" data-action="replace" title="查找替换 Ctrl+H">查找替换</button>
+            <button class="chip" data-action="import" title="导入 TXT / 备份">导入文本</button>
+            <button class="chip" data-action="outline" title="大纲 / 概要">大纲视图</button>
+            <button class="chip" data-action="trash" title="回收站">回收站</button>
+            <button class="chip" data-action="verify" title="检查数据一致性">数据体检</button>
+            <button class="chip" data-action="focus" title="专注模式 F11">专注模式</button>
+            <button class="chip" data-action="pomodoro" title="番茄钟">番茄钟</button>
+            <button class="chip" data-action="help" title="快捷键与说明">快捷键</button>
+          </div>
+          <div class="storage-line">
+            <span id="storageLabel">存储：-</span>
+            <button class="link" id="openStorageDir" title="在资源管理器中打开">打开目录</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ================= 中间编辑区 ================= -->
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="icon-btn ghost" id="toggleSidebar" title="收起 / 展开左栏">☰</button>
+          <div class="crumb">
+            <span id="crumbVolume">-</span>
+            <span class="crumb-sep">/</span>
+            <input id="chapterTitleInput" class="chapter-title-input" placeholder="章节标题" />
+          </div>
+          <select id="statusSelect" class="status-select" title="章节状态（创作阶段 → 发布阶段）"></select>
+        </div>
+        <div class="topbar-right">
+          <div class="wordcount" id="wordCountBox" title="点击查看详细统计">
+            <span class="wc-main"><b id="wcTotal">0</b> 字</span>
+            <span class="wc-sub">本章 <b id="wcChapter">0</b> · 今日 <b id="wcToday">0</b></span>
+          </div>
+          <button class="primary" id="oneClickFormat" title="一键排版（Ctrl+Shift+F）">一键排版</button>
+          <button class="icon-btn" id="snapshotBtn" title="保存并打快照 (Ctrl+Shift+S)">⛁</button>
+          <button class="icon-btn" id="historyBtn" title="历史版本：查看版本列表并逐行对比、回滚 (Ctrl+Y)">⇄</button>
+          <button class="icon-btn" id="exportBtn" title="导出 (Ctrl+E)">⤓</button>
+          <button class="icon-btn ghost" id="toggleInspector" title="收起 / 展开右栏">▤</button>
+        </div>
+      </header>
+
+      <div class="editor-wrap" id="editorWrap">
+        <div class="editor-page" id="editorPage">
+          <input id="chapterTitleBig" class="chapter-title-big" placeholder="（无标题）" />
+          <textarea id="editor" class="editor" spellcheck="false" placeholder="在这里开始写作……"></textarea>
+          <div class="editor-empty" id="editorEmpty">
+            <h3>还没有作品</h3>
+            <p>点击左上角选择作品，或按 <kbd>Ctrl</kbd>+<kbd>N</kbd> 新建一本书。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 查找替换条 -->
+      <div class="findbar" id="findBar" hidden>
+        <input id="findInput" placeholder="查找…" />
+        <input id="replaceInput" placeholder="替换为…" />
+        <label class="inline"><input type="checkbox" id="caseSensitive" /> 区分大小写</label>
+        <button class="mini" id="findNext">下一个</button>
+        <button class="mini" id="replaceOne">替换</button>
+        <button class="mini" id="replaceAllBtn">全部替换</button>
+        <button class="icon-btn ghost" id="closeFind">✕</button>
+      </div>
+
+      <!-- 底部状态栏 -->
+      <footer class="statusbar">
+        <div class="status-left">
+          <span id="saveState" class="save-state">就绪</span>
+          <span class="dot-sep">·</span>
+          <span id="versionInfo">版本 0</span>
+          <span class="dot-sep">·</span>
+          <span id="cursorInfo">行 1 · 列 1</span>
+          <span class="dot-sep">·</span>
+          <span id="selectionInfo">选中 0</span>
+        </div>
+        <div class="status-right">
+          <button class="status-chip danger" id="undoFormatBtn" hidden title="撤销上一次一键排版">↺ 撤销排版</button>
+          <button class="status-chip" data-action="outline">大纲</button>
+          <button class="status-chip" data-action="search">搜索</button>
+          <button class="status-chip" data-action="pomodoro" id="pomodoroChip">番茄钟 25:00</button>
+          <button class="status-chip" data-action="session">本次 0 字</button>
+          <span class="clock" id="clock">--:--:--</span>
+        </div>
+      </footer>
+    </main>
+
+    <!-- ================= 右侧卡片栏 ================= -->
+    <aside class="inspector" id="inspector">
+      <div class="inspector-head">
+        <div class="tabs" id="cardTabs">
+          <button class="tab active" data-kind="character">人物</button>
+          <button class="tab" data-kind="plot">剧情</button>
+          <button class="tab" data-kind="inspiration">灵光</button>
+          <button class="tab" data-kind="world">设定</button>
+        </div>
+        <button class="icon-btn" id="addCard" title="新建卡片">＋</button>
+      </div>
+      <div class="inspector-search">
+        <input id="cardSearch" type="search" placeholder="搜索卡片标题 / 标签 / 内容…" />
+      </div>
+      <div class="cards" id="cards"></div>
+      <div class="inspector-foot">
+        <button class="mini" id="insertCardContent" title="把选中卡片的内容插入正文">插入正文</button>
+        <button class="mini" id="cardsToOutline" title="把卡片汇总成剧情提纲">生成提纲</button>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ================= 通用弹层容器 ================= -->
+  <div class="overlay" id="overlay" hidden style="display:none">
+    <section class="modal" id="modal" role="dialog" aria-modal="true">
+      <header class="modal-head">
+        <h2 id="modalTitle">标题</h2>
+        <button class="icon-btn ghost" id="modalClose" title="关闭">✕</button>
+      </header>
+      <div class="modal-body" id="modalBody"></div>
+      <footer class="modal-foot" id="modalFoot"></footer>
+    </section>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/devseed.js"></script>
+  <script type="module" src="js/devdiag.js"></script>
+  <script type="module" src="js/devuitest.js"></script>
+</body>
+</html>
