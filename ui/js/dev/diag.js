@@ -1,6 +1,6 @@
 // 开发诊断：抓取 WebView 自身的渲染结果并报告视口尺寸/DPI。
 // 通过环境变量 NOVEL_MANAGER_SELFTEST=1 自动执行，结果写入数据目录。
-import { log } from './api.js';
+import { log } from '../api.js';
 
 const params = new URLSearchParams(window.location.search);
 if (window.__MOGE_SELFTEST__ === true || params.has('selftest')) {

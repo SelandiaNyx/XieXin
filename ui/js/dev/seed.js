@@ -1,7 +1,7 @@
 // 开发用示例数据：仅当地址带 ?selftest 时执行，方便截图与手工验收。
 // 正式使用（直接打开应用）不会触发任何写入。
 
-import { api, log } from './api.js';
+import { api, log } from '../api.js';
 
 const params = new URLSearchParams(window.location.search);
 // ?open=stats|export|history|outline|help|trash|books —— 开发时直接展开某个弹层验收
@@ -141,7 +141,7 @@ async function seed() {
 async function openRequestedPanel() {
   if (!openPanel) return;
   try {
-    const dialogs = await import('./dialogs.js');
+    const dialogs = await import('../dialogs.js');
     const map = {
       stats: () => dialogs.openStats(),
       export: () => dialogs.openExport(),
@@ -185,7 +185,7 @@ if (enabled) {
 // ?theme=md3 等：仅切换主题，方便肉眼验收配色
 if (theme) {
   const applyTheme = async () => {
-    const { api: tapi } = await import('./api.js');
+    const { api: tapi } = await import('../api.js');
     const next = { ...window.__moge.state.settings, theme };
     await tapi.saveSettings(next);
     document.documentElement.setAttribute('data-theme', theme);

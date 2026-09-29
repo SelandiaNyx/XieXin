@@ -196,6 +196,23 @@ pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<S
     Ok(normalized)
 }
 
+/// 记住「上次写到哪一章」，下次打开直接回到那里，而不是永远回到第一章。
+/// 只改这两个字段，避免把前端可能已经过期的整份设置写回去。
+#[tauri::command]
+pub fn set_last_position(
+    state: State<'_, AppState>,
+    book_id: String,
+    chapter_id: String,
+) -> Result<(), String> {
+    let mut store = lock(&state)?;
+    if store.settings.last_book_id == book_id && store.settings.last_chapter_id == chapter_id {
+        return Ok(());
+    }
+    store.settings.last_book_id = book_id;
+    store.settings.last_chapter_id = chapter_id;
+    store.save_settings()
+}
+
 // ---------------------------------------------------------------------------
 // 卷 / 章
 // ---------------------------------------------------------------------------
@@ -293,6 +310,18 @@ pub fn set_volume_expanded(
 // ---------------------------------------------------------------------------
 // 正文 / 历史版本
 // ---------------------------------------------------------------------------
+
+/// 全书搜索：一次 IPC、一次遍历，避免前端逐章请求（每章还会解析全部历史版本）。
+#[tauri::command]
+pub fn search_book(
+    state: State<'_, AppState>,
+    book_id: String,
+    needle: String,
+    max_per_chapter: Option<usize>,
+) -> Result<Vec<crate::storage::SearchHit>, String> {
+    let store = lock(&state)?;
+    store.search_book(&book_id, &needle, max_per_chapter.unwrap_or(5).clamp(1, 50))
+}
 
 #[tauri::command]
 pub fn read_chapter(

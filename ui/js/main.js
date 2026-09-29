@@ -114,6 +114,12 @@ async function boot() {
     `boot ok · 书架 ${state.registry.books.length} 本 · 当前《${state.book ? state.book.title : '无'}》·` +
       ` 卷 ${state.book ? state.book.volumes.length : 0} · 卡片 ${state.cards.length} · 字体 ${state.fonts.length}`,
   );
+  // 便于核对"是否恢复到上次写的章节"（也是回归验收的观测点）
+  log(
+    `boot chapter · 已打开「${
+      (findChapter(state.activeChapterId) || {}).title || '（无章节）'
+    }」id=${state.activeChapterId || '-'}`,
+  );
 }
 
 function bindGlobalUi() {
@@ -245,17 +251,48 @@ async function runOneClickFormat() {
 }
 
 // A normal close waits for the same save barrier as chapter navigation.
+// Three outcomes, all reported: saved → close; a transition is running → wait for it
+// and close; save failed → tell the user how to get out instead of refusing forever.
 async function bindCloseGuard() {
   const win = window.__TAURI__?.window?.getCurrentWindow?.();
   if (!win) return;
   await win.onCloseRequested(async event => {
+    if (window.__WRITER_CLOSING__) return; // 已经在关，放行
     event.preventDefault();
-    log('[close] 等待保存完成');
-    await withEditorTransition(async () => {
-      await api.uiLog('[close] 保存完成，关闭窗口');
+
+    const finish = async (why) => {
+      window.__WRITER_CLOSING__ = true;
+      log(`[close] ${why}`);
+      try {
+        await api.uiLog(`[close] ${why}`);
+      } catch { /* 记不上也要能关 */ }
       await win.destroy();
-      return true;
-    });
+    };
+
+    // 正在切章/回滚/导入：等它结束再走同一套保存流程，而不是把这次关闭吞掉
+    const busyDeadline = Date.now() + 15000;
+    while (state.transitioning && Date.now() < busyDeadline) {
+      await new Promise(r => setTimeout(r, 120));
+    }
+
+    if (!state.dirty) return finish('没有未保存改动，直接关闭');
+
+    const ok = await flushPendingSave();
+    if (ok) return finish('保存完成，关闭窗口');
+
+    // 保存失败：给出选择，不能把用户困在窗口里
+    const force = await confirmDialog(
+      '无法保存，暂时不能关闭',
+      '当前章节写不进磁盘（可能磁盘已满、文件被占用或数据文件损坏）。\n\n' +
+        '· 选择「仍然关闭」会保留磁盘上已有的内容，但这次未保存的改动会丢失；\n' +
+        '· 选择「取消」可以回到窗口，把正文复制到别处再处理。',
+      { okText: '仍然关闭', danger: true },
+    );
+    if (force) {
+      await finish('用户选择放弃未保存改动并关闭');
+    } else {
+      toast('已取消关闭，正文仍在编辑器中', 'warn');
+    }
   });
 }
 

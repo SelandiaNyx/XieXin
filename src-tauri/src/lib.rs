@@ -42,6 +42,7 @@ pub fn run() {
             app::update_book_meta,
             app::book_stats,
             app::save_settings,
+            app::set_last_position,
             app::add_volume,
             app::add_chapter,
             app::delete_chapter,
@@ -51,6 +52,7 @@ pub fn run() {
             app::move_chapter_to,
             app::set_volume_expanded,
             app::read_chapter,
+            app::search_book,
             app::save_chapter,
             app::list_versions,
             app::version_detail,
@@ -142,7 +144,8 @@ pub fn run() {
             }
 
             // 正常模式才创建窗口（自检模式是无头的）。
-            // NOVEL_MANAGER_START_URL / NOVEL_MANAGER_SELFTEST 便于开发时用示例数据验收界面。
+            // 正式启动不注入任何脚本：产品页面里也没有开发代码。
+            // 只有显式给出下列开关时才把 ui/js/dev/inject.js 挂进去。
             if !smoke_mode {
                 let start_url = std::env::var("NOVEL_MANAGER_START_URL").unwrap_or_default();
                 let selftest = std::env::var("NOVEL_MANAGER_SELFTEST").is_ok();
@@ -161,16 +164,19 @@ pub fn run() {
                 if let Some(dir) = custom_webview_dir {
                     win = win.data_directory(dir);
                 }
-                if selftest {
-                    win = win.initialization_script(
-                        "window.__MOGE_SELFTEST__ = true; console.log('[写心] selftest flag injected');",
-                    );
-                }
-                if uitest {
-                    win = win.initialization_script("window.__MOGE_UITEST__ = true;");
-                    if std::env::var("NOVEL_MANAGER_CLOSETEST").is_ok() {
-                        win = win.initialization_script("window.__MOGE_CLOSETEST__ = true;");
+                if selftest || uitest {
+                    let mut boot = String::from("window.__MOGE_DEV__ = true;");
+                    if selftest {
+                        boot.push_str("window.__MOGE_SELFTEST__ = true;");
                     }
+                    if uitest {
+                        boot.push_str("window.__MOGE_UITEST__ = true;");
+                        if std::env::var("NOVEL_MANAGER_CLOSETEST").is_ok() {
+                            boot.push_str("window.__MOGE_CLOSETEST__ = true;");
+                        }
+                    }
+                    boot.push_str("import('/js/dev/inject.js');");
+                    win = win.initialization_script(boot);
                 }
                 win.build()?;
             }

@@ -81,9 +81,23 @@ fn body_paragraphs(content: &str, indent: bool) -> Vec<String> {
         .collect::<Vec<_>>()
         .join("\n")
         .split("\n\n")
-        .map(|p| p.trim().to_string())
-        .filter(|p| !p.is_empty())
-        .map(|p| if indent { p } else { p.trim_start_matches(['\u{3000}', ' ']).to_string() })
+        // 只去行尾空白：str::trim 会把全角空格 U+3000 也去掉，
+        // 那样"中文段落缩进"这个选项就永远失效（段首两格正是 U+3000）。
+        .map(|p| p.trim_end().to_string())
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| {
+            let body = p.trim_start_matches(['\u{3000}', ' ']);
+            if indent {
+                // 保留原稿已有的全角缩进，没有才补两个
+                if p.starts_with('\u{3000}') {
+                    p
+                } else {
+                    format!("\u{3000}\u{3000}{body}")
+                }
+            } else {
+                body.to_string()
+            }
+        })
         .collect()
 }
 
@@ -634,4 +648,29 @@ pub fn suggest_filename(store: &Store, book_id: &str, opt: &ExportOptions) -> Re
         _ => "txt",
     };
     Ok(default_name(&book, opt, ext))
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+
+    /// 回归测试：段落缩进选项曾经完全不生效 —— `p.trim()` 会把全角空格 U+3000
+    /// 一起删掉（它是 Unicode 空白），导致 `if indent { p }` 拿到的是已去缩进的文本。
+    #[test]
+    fn paragraph_indent_option_actually_indents() {
+        let content = "　　已经缩进的一段。\n\n没有缩进的一段。\n\n  半角空格的一段。";
+
+        let indented = body_paragraphs(content, true);
+        assert_eq!(indented.len(), 3);
+        assert!(indented[0].starts_with('\u{3000}'), "已有缩进应保留：{:?}", indented[0]);
+        assert!(indented[1].starts_with("\u{3000}\u{3000}"), "应补上段首两格：{:?}", indented[1]);
+        assert!(indented[2].starts_with("\u{3000}\u{3000}"), "半角空格应被替换：{:?}", indented[2]);
+
+        let plain = body_paragraphs(content, false);
+        assert!(
+            plain.iter().all(|p| !p.starts_with(['\u{3000}', ' '])),
+            "关闭缩进时应去掉段首空白：{plain:?}"
+        );
+        assert!(plain[1].starts_with("没有缩进的一段。"), "{:?}", plain[1]);
+    }
 }

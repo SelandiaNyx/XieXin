@@ -230,6 +230,30 @@ fn run_inner(store: &mut Store) -> Result<String, String> {
         fail!("导入分章数量应为 2，实际 {imported}");
     }
 
+    // ---- 全书搜索（Rust 侧一次遍历）-------------------------------------
+    let hits = store.search_book(&book.id, "雪", 5)?;
+    log.push(line(
+        "search",
+        format!("搜「雪」命中 {} 章，首条片段 = …{}[{}]{}…",
+            hits.len(),
+            hits.first().map(|h| h.head.as_str()).unwrap_or(""),
+            hits.first().map(|h| h.hit.as_str()).unwrap_or(""),
+            hits.first().map(|h| h.tail.as_str()).unwrap_or(""),
+        ),
+    ));
+    if hits.is_empty() {
+        fail!("搜索「雪」应当命中至少一章");
+    }
+    if hits.iter().any(|h| h.hit.is_empty() || !h.hit.contains('雪')) {
+        fail!("搜索片段中的命中词不正确");
+    }
+    let none = store.search_book(&book.id, "绝不可能出现的词", 5)?;
+    if !none.is_empty() {
+        fail!("无关词不应命中");
+    }
+    // 变长小写字符不能让搜索越界（曾让替换 panic 的同一类问题）
+    let _ = store.search_book(&book.id, "İ", 5)?;
+
     // ---- 回收站 ---------------------------------------------------------
     let trash_before = store.list_trash().len();
     let target_ch = store

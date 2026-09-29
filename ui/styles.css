@@ -622,12 +622,17 @@ kbd {
 .modal-head h2 { margin: 0; font-size: 15px; }
 .modal-body { padding: 16px; overflow-y: auto; }
 .modal-foot {
-  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px;
   padding: 11px 16px;
   border-top: 1px solid var(--line);
   background: var(--panel-2);
 }
 .modal-foot .spacer { margin-right: auto; color: var(--ink-faint); font-size: 11.5px; }
+/* 按钮文字一律不折行：否则窄容器里中文会一字一行地竖排溢出 */
+.modal-foot button, .primary, .mini, .chip, .status-chip, .tab, .text-action {
+  white-space: nowrap;
+  flex: none;
+}
 
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .form-grid.one { grid-template-columns: 1fr; }

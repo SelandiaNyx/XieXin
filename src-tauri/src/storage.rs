@@ -323,6 +323,19 @@ pub struct TrashEntry {
     pub deleted_at: i64,
 }
 
+/// 全书搜索的一条命中（片段是原样文本，前端负责转义）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    pub chapter_id: String,
+    pub chapter_title: String,
+    pub volume_title: String,
+    pub count: usize,
+    pub head: String,
+    pub hit: String,
+    pub tail: String,
+}
+
 // ---------------------------------------------------------------------------
 // 存储引擎
 // ---------------------------------------------------------------------------
@@ -607,6 +620,59 @@ impl Store {
 
     pub fn write_content(&self, book_id: &str, c: &ChapterContent) -> Result<(), String> {
         write_json_atomic(&self.chapter_path(book_id, &c.chapter_id), c)
+    }
+
+    /// 全书搜索：在 Rust 侧一次遍历完成，避免前端"每章一次 IPC + 每章解析全部历史版本"。
+    /// 返回命中章节、命中次数与一段上下文片段（原样文本，转义交给前端）。
+    pub fn search_book(&self, book_id: &str, needle: &str, max_per_chapter: usize) -> Result<Vec<SearchHit>, String> {
+        if needle.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let book = self.require_book(book_id)?;
+        let pat = needle.to_lowercase();
+        let mut hits = Vec::new();
+        for vol in &book.volumes {
+            for ch in &vol.chapters {
+                let content = match self.read_content(book_id, &ch.id) {
+                    Ok(c) => c.content,
+                    // 单章读不了（损坏/缺失）不该让整次搜索失败，跳过即可
+                    Err(_) => continue,
+                };
+                let hay = content.to_lowercase();
+                let mut offsets = Vec::new();
+                let mut from = 0usize;
+                while let Some(pos) = hay[from..].find(&pat) {
+                    let abs = from + pos;
+                    if offsets.len() >= max_per_chapter {
+                        break;
+                    }
+                    offsets.push(abs);
+                    from = abs + pat.len().max(1);
+                }
+                if offsets.is_empty() {
+                    continue;
+                }
+                // 小写化可能改变字节长度，所以用字符数换算回原串
+                let original: Vec<char> = content.chars().collect();
+                let first = hay[..offsets[0]].chars().count();
+                let needle_chars = pat.chars().count();
+                let start = first.saturating_sub(30);
+                let end = (first + needle_chars + 40).min(original.len());
+                let head: String = original[start..first].iter().collect();
+                let hit: String = original[first..(first + needle_chars).min(original.len())].iter().collect();
+                let tail: String = original[(first + needle_chars).min(original.len())..end].iter().collect();
+                hits.push(SearchHit {
+                    chapter_id: ch.id.clone(),
+                    chapter_title: ch.title.clone(),
+                    volume_title: vol.title.clone(),
+                    count: offsets.len(),
+                    head,
+                    hit,
+                    tail,
+                });
+            }
+        }
+        Ok(hits)
     }
 
     pub fn read_cards(&self, book_id: &str) -> Result<Vec<Card>, String> {

@@ -28,6 +28,7 @@ export const api = {
   updateBookMeta: (payload) => call('update_book_meta', payload),
   bookStats: (bookId) => call('book_stats', { bookId }),
   saveSettings: (settings) => call('save_settings', { settings }),
+  setLastPosition: (bookId, chapterId) => call('set_last_position', { bookId, chapterId }),
 
   addVolume: (bookId, title) => call('add_volume', { bookId, title }),
   addChapter: (bookId, volumeId, title) => call('add_chapter', { bookId, volumeId, title }),
@@ -42,6 +43,8 @@ export const api = {
     call('set_volume_expanded', { bookId, volumeId, expanded }),
 
   readChapter: (bookId, chapterId) => call('read_chapter', { bookId, chapterId }),
+  searchBook: (bookId, needle, maxPerChapter = 5) =>
+    call('search_book', { bookId, needle, maxPerChapter }),
   saveChapter: (payload) => call('save_chapter', payload),
   listVersions: (bookId, chapterId) => call('list_versions', { bookId, chapterId }),
   versionDetail: (bookId, chapterId, versionId) =>

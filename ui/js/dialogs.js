@@ -9,7 +9,7 @@ import {
   formatBytes, formatTime, relativeTime, hhmmss,
 } from './ui.js';
 import {
-  saveChapter, openBookInEditor, restoreChapterVersion, flushPendingSave, withEditorTransition, clearEditor, applyFonts, restartAutosave, insertText, updateCounts, todayChars,
+  saveChapter, openBookInEditor, restoreChapterVersion, flushPendingSave, withEditorTransition, clearEditor, applyFonts, restartAutosave, insertText, updateCounts, todayChars, countLocal,
 } from './editor.js';
 import { refreshBook, renderToc } from './sidebar.js';
 
@@ -48,7 +48,7 @@ export function openBookPicker() {
     body: `<div class="book-list">${rows}</div>
       <div class="section-title">新建作品</div>
       <div class="form-grid">
-        <div class="field"><label>书名</label><input id="nbTitle" type="text" placeholder="例如：剑气长河" /></div>
+        <div class="field"><label>书名</label><input id="nbTitle" type="text" placeholder="例如：我的第一本书" /></div>
         <div class="field"><label>作者</label><input id="nbAuthor" type="text" placeholder="笔名" /></div>
         <div class="field"><label>类型</label><input id="nbGenre" type="text" placeholder="玄幻 / 都市 / 悬疑" /></div>
         <div class="field"><label>封面颜色</label><input id="nbColor" type="color" value="#6c5ce7" style="height:34px;padding:2px" /></div>
@@ -56,7 +56,7 @@ export function openBookPicker() {
     footer: `<span class="spacer">数据保存在本地：${escapeHtml(state.storageDir || '-')}</span>
              <button class="mini" data-role="import">导入备份</button>
              <button class="mini" data-role="close">关闭</button>
-             <button class="primary" data-role="create">新建并打开</button>`,
+             <button class="primary" data-role="create">创建并打开</button>`,
     onMount(bodyEl, footEl) {
       bodyEl.querySelectorAll('.book-card').forEach((card) => {
         card.addEventListener('click', async (e) => {
@@ -662,7 +662,7 @@ export function openStylePreview(draft) {
   const originalStyle = document.documentElement.getAttribute('style') || '';
   const sample = [
     '雪落下来了。',
-    '沈孤鸿站在城墙上，看着远处连绵的灯火。风从北面吹来，卷起他衣角的一片霜色。',
+    '他站在城墙上，看着远处连绵的灯火。风从北面吹来，卷起衣角的一片霜色。',
     '“你还是来了。”身后传来一个声音。',
     '他没有回头，只是把手按在刀柄上：“我等这一天，等了十年。”',
   ];
@@ -722,14 +722,14 @@ export function openStylePreview(draft) {
         <aside class="preview-side">
           <div class="preview-book">
             <span class="preview-dot"></span>
-            <div><strong>剑气长河</strong><small>2 卷 · 4 章 · 200 字</small></div>
+            <div><strong>作品名</strong><small>2 卷 · 4 章 · 200 字</small></div>
           </div>
           <div class="preview-toc">
-            <div class="preview-vol">第一卷 风起</div>
-            <div class="preview-ch active"><span class="status-pill published"></span>第一章 雪夜</div>
-            <div class="preview-ch"><span class="status-pill revising"></span>第二章 旧约</div>
-            <div class="preview-vol">第二卷 落子</div>
-            <div class="preview-ch"><span class="status-pill draft"></span>第三章 落子</div>
+            <div class="preview-vol">第一卷</div>
+            <div class="preview-ch active"><span class="status-pill published"></span>第一章 起</div>
+            <div class="preview-ch"><span class="status-pill revising"></span>第二章 承</div>
+            <div class="preview-vol">第二卷</div>
+            <div class="preview-ch"><span class="status-pill draft"></span>第三章 转</div>
           </div>
           <div class="preview-chips">
             <span>新建章</span><span>全文搜索</span><span>大纲视图</span><span>导入文本</span>
@@ -737,25 +737,25 @@ export function openStylePreview(draft) {
         </aside>
         <main class="preview-main">
           <div class="preview-top">
-            <span class="preview-crumb">第一卷 风起 / </span>
-            <b>第一章 雪夜</b>
+            <span class="preview-crumb">第一卷 / </span>
+            <b>第一章 起</b>
             <span class="preview-status">已发布</span>
           </div>
           <div class="preview-paper">
-            <h3>第一章 雪夜</h3>
+            <h3>第一章 起</h3>
             ${sample.map((p) => `<p>${escapeHtml(p)}</p>`).join('')}
           </div>
           <div class="preview-sidebar-right">
-            <div class="preview-card" style="--card-color:#8ab4f8"><b>沈孤鸿</b><span>主角，沉默寡言。</span></div>
-            <div class="preview-card" style="--card-color:#f5a623"><b>雪夜伏击</b><span>第三章埋伏笔。</span></div>
+            <div class="preview-card" style="--card-color:#8ab4f8"><b>人物卡</b><span>身份、性格、目标…</span></div>
+            <div class="preview-card" style="--card-color:#f5a623"><b>剧情卡</b><span>伏笔、转折、回收…</span></div>
           </div>
         </main>
       </div>
 
       <div class="preview-fonts">
         <div class="section-title" style="margin-top:0">字体对比（同一段文字，三种字号）</div>
-        <div class="preview-font-row" style="font-size:calc(var(--font-size) * 1.25)">第一章 雪夜 · 山有木兮木有枝</div>
-        <div class="preview-font-row">沈孤鸿站在城墙上，看着远处连绵的灯火。风从北面吹来，卷起他衣角的一片霜色。</div>
+        <div class="preview-font-row" style="font-size:calc(var(--font-size) * 1.25)">第一章 起 · 山有木兮木有枝</div>
+        <div class="preview-font-row">他站在城墙上，看着远处连绵的灯火。风从北面吹来，卷起衣角的一片霜色。</div>
         <div class="preview-font-row" style="font-size:calc(var(--font-size) * 0.8)">0123456789 · The quick brown fox jumps over the lazy dog.</div>
       </div>
 
@@ -846,7 +846,7 @@ export async function openHistory() {
             detail.innerHTML = `
               <div class="kv-list" style="margin-bottom:8px">
                 <div class="kv"><span class="k">版本时间</span><span>${formatTime(d.meta.createdAt)}</span></div>
-                <div class="kv"><span class="k">版本字数</span><span>${d.meta.chars.toLocaleString()} → 当前 ${(d.current.length ? d.current : '').length}</span></div>
+                <div class="kv"><span class="k">版本字数</span><span>${d.meta.chars.toLocaleString()} 字（当前 ${countLocal(d.current).toLocaleString()} 字）</span></div>
               </div>
               <div style="display:flex;gap:6px;margin-bottom:8px">
                 <button class="mini" id="restoreBtn">回滚到此版本</button>
@@ -1051,29 +1051,21 @@ export function openSearch() {
         if (!kw) { out.innerHTML = ''; return; }
         out.innerHTML = '<div class="empty-note">搜索中…</div>';
         const hits = [];
-        for (const ch of chapters()) {
-          try {
-            const res = await api.readChapter(state.book.id, ch.id);
-            const lower = res.content.toLowerCase();
-            const k = kw.toLowerCase();
-            let idx = lower.indexOf(k);
-            let count = 0;
-            while (idx >= 0 && count < 5) {
-              count += 1;
-              idx = lower.indexOf(k, idx + k.length);
-            }
-            if (count > 0) {
-              const at = lower.indexOf(k);
-              const from = Math.max(0, at - 30);
-              hits.push({
-                type: 'chapter',
-                id: ch.id,
-                title: ch.title,
-                where: `${ch.volumeTitle} · 命中 ${count} 处`,
-                snippet: `${res.content.slice(from, at)}<mark>${res.content.slice(at, at + kw.length)}</mark>${res.content.slice(at + kw.length, at + kw.length + 40)}`,
-              });
-            }
-          } catch { /* ignore */ }
+        // 正文搜索交给 Rust 一次遍历完成：一次 IPC，且不必把每章的历史版本都传过来
+        try {
+          const found = await api.searchBook(state.book.id, kw);
+          for (const h of found) {
+            hits.push({
+              type: 'chapter',
+              id: h.chapterId,
+              title: h.chapterTitle,
+              where: `${h.volumeTitle} · 命中 ${h.count} 处`,
+              snippet: `${escapeHtml(h.head)}<mark>${escapeHtml(h.hit)}</mark>${escapeHtml(h.tail)}`,
+            });
+          }
+        } catch (e) {
+          out.innerHTML = `<div class="empty-note">搜索失败：${escapeHtml(e.message)}</div>`;
+          return;
         }
         state.cards.forEach((c) => {
           const hay = `${c.title}\n${c.content}\n${(c.tags || []).join(' ')}`;

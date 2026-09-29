@@ -404,28 +404,89 @@ pub fn replace_all(content: &str, needle: &str, replacement: &str, case_sensitiv
             },
         );
     }
-    let (hay, pat) = if case_sensitive {
-        (content.to_string(), needle.to_string())
-    } else {
-        (content.to_lowercase(), needle.to_lowercase())
-    };
+    if case_sensitive {
+        let (out, replaced) = replace_exact(content, needle, replacement);
+        return (
+            out.clone(),
+            ReplaceReport {
+                replaced,
+                before_chars: count_text(content).total,
+                after_chars: count_text(&out).total,
+            },
+        );
+    }
+
+    // 大小写不敏感：在小写副本里找位置，再用字符对应关系切回原串。
+    // 不能用小写副本的字节偏移直接切原串 —— 那个偏移量对不上（见测试）。
+    let hay = content.to_lowercase();
+    let pat = needle.to_lowercase();
     let mut out = String::with_capacity(content.len());
-    let mut idx = 0usize;
+    let mut cursor = 0usize; // 原串字节位置
+    let mut search_from = 0usize; // 小写副本字节位置
     let mut replaced = 0usize;
-    while let Some(pos) = hay[idx..].find(&pat) {
-        let abs = idx + pos;
-        out.push_str(&content[idx..abs]);
+
+    while search_from <= hay.len() {
+        let Some(pos) = hay[search_from..].find(&pat) else { break };
+        let abs = search_from + pos;
+        // 把「小写副本里的字节区间」换算成「原串里的字符区间」。
+        // 不能简单地数小写副本的字符数：İ 小写后是 i + 组合点（两个字符），
+        // 只匹配到前半个时，原文里对应的是整个 İ 这一个字符。
+        let mut consumed = 0usize; // 已走过的小写字符数
+        let mut original_start: Option<usize> = None;
+        let mut original_end = content.len();
+        let mut found_end = false;
+        for (byte, ch) in content.char_indices() {
+            if original_start.is_none() && consumed >= abs {
+                original_start = Some(byte);
+            }
+            if !found_end && consumed >= abs + pat.len() {
+                original_end = byte;
+                found_end = true;
+            }
+            consumed += ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+        }
+        if original_start.is_none() {
+            original_start = Some(content.len());
+        }
+        if !found_end {
+            original_end = content.len();
+        }
+        let original_start = original_start.unwrap();
+        if original_start < cursor || original_end < original_start {
+            // 防御：映射异常时只前进，绝不越界
+            search_from = abs + pat.len().max(1);
+            continue;
+        }
+        out.push_str(&content[cursor..original_start]);
         out.push_str(replacement);
-        idx = abs + pat.len();
+        cursor = original_end;
+        search_from = abs + pat.len();
         replaced += 1;
     }
-    out.push_str(&content[idx..]);
+    out.push_str(&content[cursor..]);
+
     let report = ReplaceReport {
         replaced,
         before_chars: count_text(content).total,
         after_chars: count_text(&out).total,
     };
     (out, report)
+}
+
+/// 区分大小写的精确替换（字节偏移天然一致）。
+fn replace_exact(content: &str, needle: &str, replacement: &str) -> (String, usize) {
+    let mut out = String::with_capacity(content.len());
+    let mut idx = 0usize;
+    let mut replaced = 0usize;
+    while let Some(pos) = content[idx..].find(needle) {
+        let abs = idx + pos;
+        out.push_str(&content[idx..abs]);
+        out.push_str(replacement);
+        idx = abs + needle.len();
+        replaced += 1;
+    }
+    out.push_str(&content[idx..]);
+    (out, replaced)
 }
 
 /// 诊断：打印排版前后的逐行对照，用于确认缩进/空行处理是否符合预期。
@@ -492,6 +553,16 @@ pub fn self_check() -> (usize, Vec<String>) {    let mut checks: Vec<(&str, bool
     expect("replace_all 结果", out == "x x", out.clone());
     expect("replace_all 计数=2", report.replaced == 2, format!("{}", report.replaced));
 
+    // 回归：小写化会改变字节长度的字符曾让替换越界 panic（release 下直接 abort 丢稿）
+    let (out, report) = replace_all("İstanbul 的 İ 和 ẞ 与 K", "i", "X", false);
+    expect(
+        "replace_all 含变长小写字符不崩且结果正确",
+        out == "Xstanbul 的 X 和 ẞ 与 K" && report.replaced == 2,
+        format!("{out:?} / replaced={}", report.replaced),
+    );
+    let (out, _) = replace_all("ΩŒİ", "x", "y", false);
+    expect("replace_all 无匹配时原样返回", out == "ΩŒİ", out);
+
     let failures: Vec<String> = checks
         .iter()
         .filter(|(_, ok, _)| !ok)
@@ -556,5 +627,28 @@ mod tests {
         let (out, r) = replace_all("abc ABC", "abc", "x", false);
         assert_eq!(out, "x x");
         assert_eq!(r.replaced, 2);
+    }
+
+    /// 回归测试：小写化不保证字节长度不变（İ U+0130 → i̇ 是 2 个字符），
+    /// 用旧实现（小写副本的偏移直接切原串）会 index out of bounds panic。
+    #[test]
+    fn replace_is_safe_when_lowercasing_changes_length() {
+        let (out, report) = replace_all("İstanbul 的 İ 和 ẞ 与 K", "i", "X", false);
+        assert_eq!(out, "Xstanbul 的 X 和 ẞ 与 K");
+        assert_eq!(report.replaced, 2);
+
+        // 小写后变短的字形（K U+212A → k）也不能切错
+        let (out, _) = replace_all("aKb", "k", "-", false);
+        assert_eq!(out, "a-b");
+
+        // 无匹配时必须原样返回
+        let (out, report) = replace_all("ΩŒİ", "x", "y", false);
+        assert_eq!(out, "ΩŒİ");
+        assert_eq!(report.replaced, 0);
+
+        // 区分大小写路径不受影响
+        let (out, report) = replace_all("İstanbul istanbul", "istanbul", "-", true);
+        assert_eq!(out, "İstanbul -");
+        assert_eq!(report.replaced, 1);
     }
 }

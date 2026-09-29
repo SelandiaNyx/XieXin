@@ -125,7 +125,7 @@ export function openCardEditor(card) {
       <div class="form-grid">
         <div class="field">
           <label>标题</label>
-          <input id="cardTitle" type="text" value="${escapeHtml(draft.title)}" placeholder="例如：沈孤鸿 / 雪夜伏击" />
+          <input id="cardTitle" type="text" value="${escapeHtml(draft.title)}" placeholder="例如：主角名 / 关键事件" />
         </div>
         <div class="field">
           <label>类型</label>

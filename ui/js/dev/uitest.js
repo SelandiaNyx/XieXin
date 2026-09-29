@@ -2,7 +2,7 @@
 // 把每一步的结果写进数据目录的 ui-log.txt，用于在没有人工点击的情况下定位交互 bug。
 // 仅在 NOVEL_MANAGER_UITEST=1 时执行。
 
-import { api, log } from './api.js';
+import { api, log } from '../api.js';
 
 const enabled = window.__MOGE_UITEST__ === true;
 if (enabled) {
@@ -12,15 +12,31 @@ if (enabled) {
   const isOpen = () => !overlay().hidden;
   const title = () => document.getElementById('modalTitle').textContent;
 
+  // 每条日志都是一次 IPC 往返，逐条写会让整个验收套件慢到几十秒。
+  // 这里先攒在内存里，最后一次性提交。
+  const pending = [];
+  const log = (message) => pending.push(message);
+  async function flush() {
+    if (!pending.length) return;
+    const text = pending.splice(0, pending.length).join('\n');
+    try {
+      await api.uiLog(text);
+    } catch { /* 记不上也不影响验收结论 */ }
+  }
+
   async function step(name, fn) {
+    let ok = true;
+    let line;
     try {
       const detail = await fn();
-      log(`[uitest] PASS ${name}${detail ? ` :: ${detail}` : ''}`);
-      return true;
+      line = `[uitest] PASS ${name}${detail ? ` :: ${detail}` : ''}`;
     } catch (e) {
-      log(`[uitest] FAIL ${name} :: ${e && e.message ? e.message : e}`);
-      return false;
+      ok = false;
+      line = `[uitest] FAIL ${name} :: ${e && e.message ? e.message : e}`;
     }
+    log(line);
+    console.log(line);
+    return ok;
   }
 
   const assert = (cond, msg) => {
@@ -44,8 +60,8 @@ if (enabled) {
     btn.click();
     await sleep(400);
     if (!overlay().hidden) {
-      const log1 = await import('./ui.js');
-      const ui = await import('./ui.js');
+      const log1 = await import('../ui.js');
+      const ui = await import('../ui.js');
       const own = Object.getOwnPropertyDescriptor(btn, 'onclick');
       const proto = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(btn), 'onclick');
       let directResult = '未调用';
@@ -353,8 +369,55 @@ if (enabled) {
       }),
     );
 
+    // 15. 弹层底部按钮不能折行（窄容器里中文会被压成一字一行的竖排溢出）
+    results.push(
+      await step('弹层按钮不折行溢出', async () => {
+        await openFrom('#exportBtn');
+        const foot = document.getElementById('modalFoot');
+        const buttons = [...foot.querySelectorAll('button')];
+        const bad = buttons
+          .map((b) => ({ text: b.textContent.trim(), h: Math.round(b.getBoundingClientRect().height) }))
+          .filter((b) => b.h > 48);
+        await closeByX();
+        assert(bad.length === 0, `按钮高度异常（疑似折行）：${bad.map((b) => `${b.text}=${b.h}px`).join('、')}`);
+        return `${buttons.length} 个按钮均单行显示`;
+      }),
+    );
+
+    // 16. 记住上次写的章节（下一次启动会核对这里留下的位置）
+    results.push(
+      await step('切换到第二章并记录位置', async () => {
+        const rows = [...document.querySelectorAll('.chapter-row')];
+        assert(rows.length >= 2, `章节不足：${rows.length}`);
+        rows[1].click();
+        await sleep(1600);
+        const title = document.getElementById('chapterTitleBig').value;
+        const marked = document.querySelector('.chapter-row.active .chapter-title');
+        return `当前章节=${title}，目录高亮=${marked ? marked.textContent : '无'}`;
+      }),
+    );
+
+    // 17. 全文搜索走后端一次遍历，且片段正确转义
+    results.push(
+      await step('全文搜索返回命中且片段转义', async () => {
+        await openFrom('#quickSearch');
+        const input = document.getElementById('searchInput');
+        input.value = '雪';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await sleep(1800);
+        const hits = document.querySelectorAll('#searchResults .hit');
+        assert(hits.length > 0, '搜索「雪」没有返回任何结果');
+        const html = document.getElementById('searchResults').innerHTML;
+        assert(html.includes('<mark>'), '结果里没有高亮命中词');
+        assert(!/<script|onerror=/.test(html), '片段里出现了未转义的标签');
+        await closeByX();
+        return `命中 ${hits.length} 条，含高亮且无未转义标签`;
+      }),
+    );
+
     const failed = results.filter((r) => !r).length;
     log(`[uitest] ==== 结束：${results.length - failed}/${results.length} 项通过 ====`);
+    await flush();
     if (!failed && window.__MOGE_CLOSETEST__) {
       const view = document.getElementById('editor');
       view.value += '\nCLOSE_SAVE_REGRESSION_20260929';
@@ -368,7 +431,10 @@ if (enabled) {
     if (window.__moge && window.__moge.ready) {
       clearInterval(timer);
       setTimeout(() => {
-        run().catch((e) => log(`[uitest] 运行异常: ${e && e.stack ? e.stack : e}`));
+        run().catch(async (e) => {
+          log(`[uitest] 运行异常: ${e && e.stack ? e.stack : e}`);
+          await flush();
+        });
       }, 800);
     }
   }, 300);

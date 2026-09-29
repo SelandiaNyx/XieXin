@@ -166,7 +166,16 @@ async function loadChapter(book, chapterId, cards = state.cards) {
 export async function openChapter(chapterId, { force = false } = {}) {
   if (!chapterId || !state.book) return false;
   if (!force && chapterId === state.activeChapterId) return true;
-  return withEditorTransition(() => loadChapter(state.book, chapterId));
+  const ok = await withEditorTransition(() => loadChapter(state.book, chapterId));
+  // 记住位置，下次启动直接回到这一章（写失败不影响当前编辑）
+  if (ok && state.book) {
+    state.settings.lastBookId = state.book.id;
+    state.settings.lastChapterId = chapterId;
+    if (typeof api.setLastPosition === 'function') {
+      Promise.resolve(api.setLastPosition(state.book.id, chapterId)).catch(() => {});
+    }
+  }
+  return ok;
 }
 
 export async function openBookInEditor(bookId) {
