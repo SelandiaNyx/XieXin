@@ -3,6 +3,19 @@
 一个用 **Rust + Tauri 2** 写成的原生 Windows 桌面应用，专门用来写长篇小说。
 完全离线运行，所有稿件都存在本机，自带版本历史、导出、卡片灵感墙与一键排版。
 
+## 本次更新：创作工作台与保存可靠性
+
+- 新工作台采用浅灰底、青绿色强调色、统一线性图标与三栏布局。顶部集中保存、快照、历史和导出，正文工具条提供排版与专注模式。
+- 左侧新增每日创作目标，右侧统一素材卡片与分类筛选；支持 1040×640 最小窗口、深色主题与键盘焦点。
+- 保存请求排队执行；保存期间继续输入不会清除未保存标记。切章、换书、回滚和正常关闭窗口会先等待保存成功。
+- 使用同目录临时文件、同步写盘、直接替换原文件。替换失败保留原文件和临时文件；损坏的章节、卡片、索引会明确报错，不再按空数据覆盖。
+- 手动快照保存当前正文（包含已自动保存的内容）；修正回滚后正文不刷新、括号配对、英文数字统计和确认弹窗。
+- 普通启动现在遵守 `--data-dir`；内置自检使用独立临时目录。
+
+`pwsh -File dev.ps1 test` 运行前端回归、Rust 核心测试和纯函数自检，前端测试需要 Node.js。
+`node tests/preview-server.cjs` 在本机 4173 端口预览真实界面；预览只使用内存示例数据，实际保存与导出请使用桌面应用。
+界面验收截图用 `.tooling/screenshot.ps1` 生成，编号命名的那些会进仓库（详见下文「界面验收与截图」）。
+
 ## 界面动效
 
 整套界面共用一套动效令牌（时长 110 / 190 / 280 / 420ms，曲线 `cubic-bezier(0.16, 1, 0.3, 1)`，
@@ -11,7 +24,7 @@
 - 左右栏收起展开时**列宽平滑过渡**，不是瞬间消失
 - 弹层入场轻微缩放淡入、关闭时**播放收拢动画**再消失；点击遮罩也能关
 - 目录树、右侧卡片、弹层表单**错峰淡入**（每项延迟 20~35ms，有层次不晃眼）
-- 切换章节用 **View Transitions** 做整屏交叉淡入，正文纸张另有一层轻微上浮
+- 切换章节同步更新正文和章节标识，以轻微的纸张入场动画提示切换
 - 字数统计**数字滚动**变化，而不是生硬替换
 - 所有按钮、卡片、列表项都有按下缩放与悬停过渡；提示条滑入滑出
 - 首次渲染加了一层动画守卫（`no-anim`），避免开屏瞬间抖动
@@ -109,18 +122,38 @@ recent-exports.json                    最近导出记录
 
 ## 构建与运行
 
-工具链与依赖已经随仓库放在工作区内（`.cargo` / `.rustup` / `.tooling`），无需全局安装 Rust。
+当前工作区已准备好本地工具链（`.cargo` / `.rustup` / `.tooling`），无需全局安装 Rust。这些工具链目录未纳入 Git，新克隆环境需要自行准备 Rust 和对应的 Windows 构建工具。
 
 ```powershell
 pwsh -File dev.ps1 check      # 类型检查
 pwsh -File dev.ps1 build      # 调试构建
 pwsh -File dev.ps1 run        # 启动应用
-pwsh -File dev.ps1 test       # 纯函数自检（字数统计 / 排版 / 分章 / 替换）
+pwsh -File dev.ps1 test       # 前端回归 + Rust 核心测试 + 纯函数自检
 pwsh -File dev.ps1 smoke      # 无头端到端自检（建书→写作→版本→排版→导出→导入→回收站→重载）
 pwsh -File dev.ps1 release    # 发布构建（target/release/novel-manager.exe）
+pwsh -File packaging/package.ps1 # 构建并打包 release/HeartWrite-Windows.zip
 ```
 
+便携版解压后运行 `HeartWrite/HeartWrite.exe`，并保留旁边的 `WebView2Loader.dll`。程序继续使用原来的默认稿件目录。
+
 应用内「设置 → 运行内置自检」也能随时跑一遍同样的全流程检查。
+
+### 界面验收与截图
+
+```powershell
+pwsh -File .tooling/screenshot.ps1 -Name app                              # 主界面
+pwsh -File .tooling/screenshot.ps1 -Name settings -Url "index.html?open=settings"
+pwsh -File .tooling/screenshot.ps1 -Name preview  -Url "index.html?open=preview&theme=md3"
+```
+
+截图会自动编号写入 `.shots/`（如 `.shots/04-preview.png`）。按 `.gitignore` 约定，**只有编号命名的截图会进仓库**，
+其余（调试用的中间产物）留在本地，因此顺手 `git add .shots` 就能把"这一轮已核对过的界面状态"固化进提交。
+
+要做纯界面改动（不经 Rust、不碰真实稿件）时，可以用内存示例数据在浏览器里预览：
+
+```powershell
+node tests/preview-server.cjs   # http://127.0.0.1:4173 ，加 ?empty 看空状态
+```
 
 ### 本机工具链说明（为什么这样搭）
 
@@ -144,7 +177,8 @@ pwsh -File dev.ps1 release    # 发布构建（target/release/novel-manager.exe�
 | `--data-dir <路径>` | 指定数据目录 |
 | `NOVEL_MANAGER_DATA_DIR` | 同上（环境变量形式） |
 | `NOVEL_MANAGER_SELFTEST=1` | 启动时写入一套示例数据（《剑气长河》），便于验收界面 |
-| `NOVEL_MANAGER_UITEST=1` | 启动后自动跑 19 项界面交互验收（打开/关闭各弹层、按钮、字数、主题、字体、番茄钟、导出格式），结果写入 `ui-log.txt` |
+| `NOVEL_MANAGER_UITEST=1` | 启动后自动跑 25 项界面交互验收（打开/关闭各弹层、按钮、字数、主题、字体、番茄钟、导出格式），结果写入 `ui-log.txt` |
+| `NOVEL_MANAGER_CLOSETEST=1` | 配合 UITEST，在界面自检后验证关闭前保存并自动退出；仅在临时测试目录中使用 |
 | `NOVEL_MANAGER_START_URL=<路径>` | 自定义入口页，例如 `index.html?open=stats` 直接展开统计面板、`index.html?theme=md3` 直接换配色 |
 
 数据目录下的 `ui-log.txt` 会记录前端启动信息与未捕获异常，排查界面问题时可先看它。
@@ -164,21 +198,30 @@ src-tauri/src/
   smoke.rs        端到端自检脚本
 ui/
   index.html      三栏工作台骨架
-  styles.css      7 套主题与全部样式
+  styles.css      7 套主题与基础组件样式
+  workspace.css   新版工作台布局、主题细节与窗口适配
   js/main.js      入口、快捷键、会话统计、全局事件绑定
   js/store.js     全局状态（含章节状态表）
   js/api.js       IPC 封装
   js/sidebar.js   卷章目录树（含拖拽、状态色点）
-  js/editor.js    正文编辑、自动保存、字数统计、章节状态
+  js/editor.js    正文编辑、自动保存、字数统计、章节状态、切章与保存加锁
   js/cards.js     卡片墙
   js/pomodoro.js  番茄钟（开始/暂停/重置/跳过、时长设置、本地保存）
   js/dialogs.js   书架/设置/导出/历史/统计/大纲/搜索/回收站/帮助
-  js/ui.js        提示条与通用弹层
+  js/ui.js        提示条、通用弹层、数字滚动动效
   js/devseed.js   开发用示例数据（仅在自检开关下生效）
   js/devdiag.js   开发用视口诊断（写入 ui-log.txt）
-  js/devuitest.js 开发用界面自动验收（19 项交互检查）
+  js/devuitest.js 开发用界面自动验收（25 项交互检查）
+src-tauri/tests/
+  core.rs         挂载 storage/text/export/zip 模块，让 cargo test 无需链接桌面事件循环
+tests/
+  editor.test.cjs 前端回归（Node 原生 test + vm 假 DOM，覆盖并发保存与切章丢稿）
+  preview-server.cjs / preview-fixture.js  浏览器内的内存数据界面预览
+packaging/
+  package.ps1     产出便携版目录与 release/HeartWrite-Windows.zip
 dev.ps1           一行命令完成构建 / 运行 / 自检 / 发布
 .tooling/         本机工具链（MinGW-w64、图标生成器、截图脚本）
+.shots/           编号命名的界面验收截图（进仓库）
 ```
 
 ## 许可证
