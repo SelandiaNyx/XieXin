@@ -128,7 +128,7 @@ pub fn open_book(state: State<'_, AppState>, book_id: String) -> Result<BookPayl
     let book = store.book(&book_id)?;
     store.settings.last_book_id = book_id.clone();
     store.save_settings()?;
-    let cards = store.read_cards(&book_id);
+    let cards = store.read_cards(&book_id)?;
     Ok(BookPayload {
         book,
         cards,
@@ -184,7 +184,7 @@ pub fn update_book_meta(
 pub fn book_stats(state: State<'_, AppState>, book_id: String) -> Result<BookStats, String> {
     let store = lock(&state)?;
     let book = store.book(&book_id)?;
-    Ok(store.book_stats(&book))
+    Ok(store.book_stats(&book)?)
 }
 
 #[tauri::command]
@@ -301,7 +301,7 @@ pub fn read_chapter(
     chapter_id: String,
 ) -> Result<Version, String> {
     let store = lock(&state)?;
-    let c = store.read_content(&book_id, &chapter_id);
+    let c = store.read_content(&book_id, &chapter_id)?;
     Ok(Version {
         id: chapter_id,
         created_at: c.updated_at,
@@ -329,7 +329,7 @@ pub fn save_chapter(
     let manual = manual_snapshot.unwrap_or(false);
     // 距离上一版本超过 3 分钟时自动补一个版本；内容差异阈值之外的连续保存不刷版本。
     let recent = store
-        .read_content(&book_id, &chapter_id)
+        .read_content(&book_id, &chapter_id)?
         .versions
         .first()
         .map(|v| now_ms() - v.created_at)
@@ -357,7 +357,7 @@ pub fn list_versions(
     chapter_id: String,
 ) -> Result<Vec<VersionMeta>, String> {
     let store = lock(&state)?;
-    Ok(store.list_versions(&book_id, &chapter_id))
+    Ok(store.list_versions(&book_id, &chapter_id)?)
 }
 
 #[tauri::command]
@@ -369,7 +369,7 @@ pub fn version_detail(
 ) -> Result<VersionDetail, String> {
     let store = lock(&state)?;
     let v = store
-        .version_content(&book_id, &chapter_id, &version_id)
+        .version_content(&book_id, &chapter_id, &version_id)?
         .ok_or_else(|| "找不到该版本".to_string())?;
     let meta = VersionMeta {
         id: v.id.clone(),
@@ -378,7 +378,7 @@ pub fn version_detail(
         label: v.label.clone(),
         chars: v.chars,
     };
-    let current = store.read_content(&book_id, &chapter_id).content;
+    let current = store.read_content(&book_id, &chapter_id)?.content;
     let title = store
         .book(&book_id)?
         .volumes
@@ -424,7 +424,7 @@ pub fn delete_version(
 #[tauri::command]
 pub fn list_cards(state: State<'_, AppState>, book_id: String) -> Result<Vec<Card>, String> {
     let store = lock(&state)?;
-    Ok(store.read_cards(&book_id))
+    Ok(store.read_cards(&book_id)?)
 }
 
 #[tauri::command]
@@ -551,7 +551,7 @@ pub async fn export_book(
 #[tauri::command]
 pub fn list_recent_exports(state: State<'_, AppState>) -> Result<Vec<RecentExport>, String> {
     let store = lock(&state)?;
-    Ok(store.read_recent_exports())
+    Ok(store.read_recent_exports()?)
 }
 
 #[tauri::command]
@@ -808,15 +808,21 @@ pub fn chapter_statuses() -> Vec<ChapterStatus> {
 }
 
 #[tauri::command]
-pub fn dev_smoke_test(app: tauri::AppHandle) -> Result<String, String> {
-    let state = app.state::<AppState>();
-    let mut store = lock(&state)?;
+pub fn dev_smoke_test() -> Result<String, String> {
+    // Diagnostics must never add test books to the writer's real workspace.
+    let root = std::env::temp_dir().join(format!("heartwrite-selftest-{}", uuid::Uuid::new_v4()));
+    let mut store = Store::load(root)?;
     let report = smoke::run(&mut store)?;
     println!("[SMOKE]\n{report}");
     Ok(report)
 }
 
 pub fn storage_dir_for_app(app: &tauri::AppHandle) -> PathBuf {
+    if let Ok(dir) = std::env::var("NOVEL_MANAGER_DATA_DIR") {
+        if !dir.trim().is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
     app.path()
         .app_data_dir()
         .ok()

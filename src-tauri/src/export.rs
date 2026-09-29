@@ -87,7 +87,7 @@ fn body_paragraphs(content: &str, indent: bool) -> Vec<String> {
         .collect()
 }
 
-fn render_txt(book: &BookMeta, store: &Store, opt: &ExportOptions) -> (String, usize) {
+fn render_txt(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(String, usize), String> {
     let mut out = String::new();
     let mut chapters = 0usize;
     if opt.include_meta_header {
@@ -98,7 +98,7 @@ fn render_txt(book: &BookMeta, store: &Store, opt: &ExportOptions) -> (String, u
         if !book.genre.is_empty() {
             out.push_str(&format!("类型：{}\n", book.genre));
         }
-        let stats = store.book_stats(book);
+        let stats = store.book_stats(book)?;
         out.push_str(&format!(
             "总字数：{}　章节：{}　导出时间：{}\n",
             stats.char_count,
@@ -124,7 +124,7 @@ fn render_txt(book: &BookMeta, store: &Store, opt: &ExportOptions) -> (String, u
             if opt.include_chapter_title {
                 out.push_str(&format!("{}\n\n", ch.title));
             }
-            let content = store.read_content(&book.id, &ch.id).content;
+            let content = store.read_content(&book.id, &ch.id)?.content;
             chapters += 1;
             for p in body_paragraphs(&content, opt.indent_paragraphs) {
                 out.push_str(&p);
@@ -133,10 +133,10 @@ fn render_txt(book: &BookMeta, store: &Store, opt: &ExportOptions) -> (String, u
             out.push_str("\n\n");
         }
     }
-    (out, chapters)
+    Ok((out, chapters))
 }
 
-fn render_md(book: &BookMeta, store: &Store, opt: &ExportOptions) -> (String, usize) {
+fn render_md(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(String, usize), String> {
     let mut out = String::new();
     let mut chapters = 0usize;
     if opt.include_meta_header {
@@ -147,7 +147,7 @@ fn render_md(book: &BookMeta, store: &Store, opt: &ExportOptions) -> (String, us
         if !book.genre.is_empty() {
             out.push_str(&format!("- 类型：{}\n", book.genre));
         }
-        let stats = store.book_stats(book);
+        let stats = store.book_stats(book)?;
         out.push_str(&format!("- 总字数：{}\n- 章节数：{}\n\n", stats.char_count, stats.chapters));
         if !book.summary.trim().is_empty() {
             out.push_str(&format!("> {}\n\n", book.summary.trim().replace('\n', "\n> ")));
@@ -168,17 +168,17 @@ fn render_md(book: &BookMeta, store: &Store, opt: &ExportOptions) -> (String, us
             if opt.include_chapter_title {
                 out.push_str(&format!("### {}\n\n", ch.title));
             }
-            let content = store.read_content(&book.id, &ch.id).content;
+            let content = store.read_content(&book.id, &ch.id)?.content;
             chapters += 1;
             for p in body_paragraphs(&content, false) {
                 out.push_str(&format!("{}\n\n", p));
             }
         }
     }
-    (out, chapters)
+    Ok((out, chapters))
 }
 
-fn render_html(book: &BookMeta, store: &Store, opt: &ExportOptions) -> (String, usize) {
+fn render_html(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(String, usize), String> {
     let mut out = String::new();
     let mut chapters = 0usize;
     out.push_str("<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset=\"utf-8\">\n");
@@ -206,7 +206,7 @@ fn render_html(book: &BookMeta, store: &Store, opt: &ExportOptions) -> (String, 
         if !book.genre.is_empty() {
             meta.push(format!("类型：{}", esc_html(&book.genre)));
         }
-        let stats = store.book_stats(book);
+        let stats = store.book_stats(book)?;
         meta.push(format!("总字数：{}", stats.char_count));
         meta.push(format!("章节：{}", stats.chapters));
         out.push_str(&format!("<p class=\"meta\">{}</p>\n", meta.join(" · ")));
@@ -232,7 +232,7 @@ fn render_html(book: &BookMeta, store: &Store, opt: &ExportOptions) -> (String, 
             if opt.include_chapter_title {
                 out.push_str(&format!("<h3>{}</h3>\n", esc_html(&ch.title)));
             }
-            let content = store.read_content(&book.id, &ch.id).content;
+            let content = store.read_content(&book.id, &ch.id)?.content;
             chapters += 1;
             for p in body_paragraphs(&content, false) {
                 out.push_str(&format!("<p>{}</p>\n", esc_html(&p).replace('\n', "<br>")));
@@ -240,7 +240,7 @@ fn render_html(book: &BookMeta, store: &Store, opt: &ExportOptions) -> (String, 
         }
     }
     out.push_str("</div>\n</body>\n</html>\n");
-    (out, chapters)
+    Ok((out, chapters))
 }
 
 #[derive(Serialize)]
@@ -266,7 +266,7 @@ fn render_json(book: &BookMeta, store: &Store) -> Result<(String, usize), String
     let mut chapters = Vec::new();
     for vol in &book.volumes {
         for ch in &vol.chapters {
-            let c = store.read_content(&book.id, &ch.id);
+            let c = store.read_content(&book.id, &ch.id)?;
             chapters.push(BackupChapter {
                 id: ch.id.clone(),
                 title: ch.title.clone(),
@@ -280,7 +280,7 @@ fn render_json(book: &BookMeta, store: &Store) -> Result<(String, usize), String
         version: env!("CARGO_PKG_VERSION"),
         exported_at: now_ms(),
         book,
-        cards: store.read_cards(&book.id),
+        cards: store.read_cards(&book.id)?,
         chapters,
     };
     let n = payload.chapters.len();
@@ -330,7 +330,7 @@ fn render_epub(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(V
             if !opt.chapter_id.is_empty() && ch.id != opt.chapter_id {
                 continue;
             }
-            let content = store.read_content(&book.id, &ch.id).content;
+            let content = store.read_content(&book.id, &ch.id)?.content;
             let mut body = String::new();
             if opt.include_chapter_title {
                 body.push_str(&format!("<h2>{}</h2>\n", esc_html(&ch.title)));
@@ -491,11 +491,11 @@ pub fn render(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(St
     let format = opt.format.to_lowercase();
     match format.as_str() {
         "md" | "markdown" => {
-            let (s, n) = render_md(book, store, opt);
+            let (s, n) = render_md(book, store, opt)?;
             Ok((s, n, "md".into()))
         }
         "html" | "htm" => {
-            let (s, n) = render_html(book, store, opt);
+            let (s, n) = render_html(book, store, opt)?;
             Ok((s, n, "html".into()))
         }
         "json" | "backup" => {
@@ -503,7 +503,7 @@ pub fn render(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(St
             Ok((s, n, "json".into()))
         }
         _ => {
-            let (s, n) = render_txt(book, store, opt);
+            let (s, n) = render_txt(book, store, opt)?;
             Ok((s, n, "txt".into()))
         }
     }
@@ -556,7 +556,7 @@ pub fn run_export(store: &Store, book_id: &str, opt: &ExportOptions) -> Result<E
     let format = opt.format.to_lowercase();
     let (data, chars, chapters, ext): (Vec<u8>, usize, usize, String) = if format == "epub" {
         let (bytes, chapters) = render_epub(&book, store, opt)?;
-        let chars = store.book_stats(&book).char_count;
+        let chars = store.book_stats(&book)?.char_count;
         (bytes, chars, chapters, "epub".into())
     } else {
         let (body, chapters, ext) = render(&book, store, opt)?;

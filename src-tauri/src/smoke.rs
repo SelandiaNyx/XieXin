@@ -96,26 +96,26 @@ fn run_inner(store: &mut Store) -> Result<String, String> {
     }
     log.push(line("format", format!("排版后 {} 字", count_text(&formatted).total)));
 
-    // ---- 历史版本：新版本保存的是“改动前”的正文 -------------------------
-    let versions = store.list_versions(&book.id, &ch_id);
+    // ---- 历史版本：手动快照保存当前正文 -------------------------
+    let versions = store.list_versions(&book.id, &ch_id)?;
     log.push(line("versions", format!("共 {} 个历史版本", versions.len())));
     if versions.len() != 2 {
         fail!("应有 2 个历史版本，实际 {}", versions.len());
     }
     let newest = versions.first().ok_or("版本列表为空")?;
     let detail = store
-        .version_content(&book.id, &ch_id, &newest.id)
+        .version_content(&book.id, &ch_id, &newest.id)?
         .ok_or("读取版本内容失败")?;
-    if detail.content != body1 {
+    if detail.content != body2 {
         fail!(
-            "最新历史版本应为第二次保存前的正文（{} 字节），实际 {} 字节",
-            body1.len(),
+            "最新手动快照应为第二次保存的正文（{} 字节），实际 {} 字节",
+            body2.len(),
             detail.content.len()
         );
     }
-    log.push(line("version", "最新版本内容 = 第二次保存前的正文"));
+    log.push(line("version", "最新手动快照内容 = 第二次保存的正文"));
 
-    let restored = store.restore_version(&book.id, &ch_id, &newest.id)?;
+    let restored = store.restore_version(&book.id, &ch_id, &versions[1].id)?;
     log.push(line(
         "restore",
         format!("回滚完成 字数={} 版本={}", restored.char_count, restored.versions),
@@ -123,7 +123,7 @@ fn run_inner(store: &mut Store) -> Result<String, String> {
     if restored.char_count != count_text(body1).total {
         fail!("回滚后字数应为 {}，实际 {}", count_text(body1).total, restored.char_count);
     }
-    if store.read_content(&book.id, &ch_id).content != body1 {
+    if store.read_content(&book.id, &ch_id)?.content != body1 {
         fail!("回滚后正文与所选历史版本不一致");
     }
 
@@ -150,7 +150,7 @@ fn run_inner(store: &mut Store) -> Result<String, String> {
             ..Default::default()
         },
     )?;
-    let cards = store.read_cards(&book.id);
+    let cards = store.read_cards(&book.id)?;
     log.push(line("cards", format!("卡片 {} 张，首张={}", cards.len(), card.title)));
     if cards.len() != 2 {
         fail!("卡片数量不正确：{}", cards.len());
@@ -204,7 +204,7 @@ fn run_inner(store: &mut Store) -> Result<String, String> {
 
     // ---- 统计（重新从磁盘读取，确保目录树与正文一致）--------------------
     let live_book = store.book(&book.id).map_err(|e| e.to_string())?;
-    let stats = store.book_stats(&live_book);
+    let stats = store.book_stats(&live_book)?;
     log.push(line(
         "stats",
         format!(
@@ -271,7 +271,7 @@ fn run_inner(store: &mut Store) -> Result<String, String> {
         .max_by_key(|(_, _, n)| *n)
         .cloned()
         .ok_or("删除后应仍有章节")?;
-    let re_content = reopened.read_content(&book.id, &survivor).content;
+    let re_content = reopened.read_content(&book.id, &survivor)?.content;
     let re_trash = reopened.list_trash().len();
     log.push(line(
         "reload",

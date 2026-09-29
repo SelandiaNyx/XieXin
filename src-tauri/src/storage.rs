@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,7 @@ pub const MAX_HISTORY_HARD_CAP: usize = 200;
 fn default_theme() -> String {
     "light".into()
 }
+
 fn default_font_family() -> String {
     "霞鹜文楷, 思源宋体, 宋体, Microsoft YaHei, serif".into()
 }
@@ -333,12 +335,14 @@ pub struct Store {
     pub save_count: u64,
 }
 
-fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
-    let raw = fs::read_to_string(path).ok()?;
-    if raw.trim().is_empty() {
-        return None;
-    }
-    serde_json::from_str(&raw).ok()
+fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>, String> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("读取失败 {}: {e}。原文件未修改。", path.display())),
+    };
+    serde_json::from_str(&raw).map(Some)
+        .map_err(|e| format!("数据文件损坏 {}: {e}。请先备份并检查该文件，原文件未修改。", path.display()))
 }
 
 fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
@@ -346,12 +350,15 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String>
         fs::create_dir_all(parent).map_err(|e| format!("创建目录失败 {}: {e}", parent.display()))?;
     }
     let body = serde_json::to_string_pretty(value).map_err(|e| format!("序列化失败: {e}"))?;
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, body.as_bytes()).map_err(|e| format!("写入失败 {}: {e}", tmp.display()))?;
-    if path.exists() {
-        let _ = fs::remove_file(path);
-    }
-    fs::rename(&tmp, path).map_err(|e| format!("替换文件失败 {}: {e}", path.display()))?;
+    let tmp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)
+        .map_err(|e| format!("创建临时文件失败 {}: {e}", tmp.display()))?;
+    file.write_all(body.as_bytes()).and_then(|_| file.sync_all())
+        .map_err(|e| format!("写入失败 {}: {e}。原文件保留。", tmp.display()))?;
+    drop(file);
+    // 同目录直接替换，绝不先删旧文件；Windows 的 fs::rename 使用替换语义。
+    fs::rename(&tmp, path).map_err(|e| format!(
+        "替换文件失败 {}: {e}。原文件保留，新内容位于 {}。", path.display(), tmp.display()))?;
     Ok(())
 }
 
@@ -406,9 +413,9 @@ impl Store {
         fs::create_dir_all(root.join("exports")).map_err(|e| e.to_string())?;
         fs::create_dir_all(root.join("trash")).map_err(|e| e.to_string())?;
 
-        let mut settings: Settings = read_json(&root.join("settings.json")).unwrap_or_default();
+        let mut settings: Settings = read_json(&root.join("settings.json"))?.unwrap_or_default();
         settings = settings.normalized();
-        let registry: Registry = read_json(&root.join("books.json")).unwrap_or_default();
+        let registry: Registry = read_json(&root.join("books.json"))?.unwrap_or_default();
 
         let mut store = Store {
             root,
@@ -458,7 +465,7 @@ impl Store {
     }
 
     pub fn book(&self, id: &str) -> Result<BookMeta, String> {
-        read_json(&self.book_path(id)).ok_or_else(|| format!("找不到书籍 {id}"))
+        read_json(&self.book_path(id))?.ok_or_else(|| format!("找不到书籍 {id}"))
     }
 
     pub fn book_mut<'a>(&'a mut self, id: &str) -> Result<&'a mut BookMeta, String> {
@@ -522,21 +529,31 @@ impl Store {
         Ok(migrated)
     }
 
-    pub fn read_content(&self, book_id: &str, chapter_id: &str) -> ChapterContent {
+    pub fn read_content(&self, book_id: &str, chapter_id: &str) -> Result<ChapterContent, String> {
+        let chapter = self.require_book(book_id)?.volumes.iter()
+            .flat_map(|v| &v.chapters).find(|c| c.id == chapter_id)
+            .ok_or_else(|| format!("找不到章节 {chapter_id}"))?;
         let path = self.chapter_path(book_id, chapter_id);
-        let mut c: ChapterContent = read_json(&path).unwrap_or_default();
+        let stored = read_json(&path)?;
+        if stored.is_none() && (chapter.char_count > 0 || chapter.versions > 0) {
+            return Err(format!("章节文件缺失 {}。已停止读取和覆盖，请检查备份。", path.display()));
+        }
+        let mut c: ChapterContent = stored.unwrap_or_default();
         if c.chapter_id.is_empty() {
             c.chapter_id = chapter_id.to_string();
         }
-        c
+        if c.chapter_id != chapter_id {
+            return Err(format!("章节标识不匹配 {}，原文件未修改。", path.display()));
+        }
+        Ok(c)
     }
 
     pub fn write_content(&self, book_id: &str, c: &ChapterContent) -> Result<(), String> {
         write_json_atomic(&self.chapter_path(book_id, &c.chapter_id), c)
     }
 
-    pub fn read_cards(&self, book_id: &str) -> Vec<Card> {
-        read_json(&self.cards_path(book_id)).unwrap_or_default()
+    pub fn read_cards(&self, book_id: &str) -> Result<Vec<Card>, String> {
+        Ok(read_json(&self.cards_path(book_id))?.unwrap_or_default())
     }
 
     // -- 书籍 ---------------------------------------------------------------
@@ -710,14 +727,14 @@ impl Store {
 
     // -- 统计 ---------------------------------------------------------------
 
-    pub fn book_stats(&self, book: &BookMeta) -> BookStats {
+    pub fn book_stats(&self, book: &BookMeta) -> Result<BookStats, String> {
         let mut stats = BookStats {
             char_count: 0,
             words: 0,
             cjk: 0,
             chapters: 0,
             volumes: book.volumes.len(),
-            cards: self.read_cards(&book.id).len(),
+            cards: self.read_cards(&book.id)?.len(),
             versions: 0,
             today_chars: 0,
         };
@@ -727,7 +744,7 @@ impl Store {
                 stats.chapters += 1;
                 stats.char_count += ch.char_count;
                 stats.versions += ch.versions;
-                let content = self.read_content(&book.id, &ch.id);
+                let content = self.read_content(&book.id, &ch.id)?;
                 let c = count_text(&content.content);
                 stats.words += c.words;
                 stats.cjk += c.cjk;
@@ -736,7 +753,7 @@ impl Store {
                 }
             }
         }
-        stats
+        Ok(stats)
     }
 
     pub fn storage_bytes(&self) -> u64 {
@@ -745,15 +762,15 @@ impl Store {
 
     // -- 最近导出记录 --------------------------------------------------------
 
-    pub fn read_recent_exports(&self) -> Vec<crate::export::RecentExport> {
-        read_json(&self.root.join("recent-exports.json")).unwrap_or_default()
+    pub fn read_recent_exports(&self) -> Result<Vec<crate::export::RecentExport>, String> {
+        Ok(read_json(&self.root.join("recent-exports.json"))?.unwrap_or_default())
     }
 
     pub fn push_recent_export(
         &self,
         item: crate::export::RecentExport,
     ) -> Result<Vec<crate::export::RecentExport>, String> {
-        let mut list = self.read_recent_exports();
+        let mut list = self.read_recent_exports()?;
         list.retain(|r| r.path != item.path);
         list.insert(0, item);
         list.truncate(20);
@@ -778,7 +795,7 @@ impl Store {
     ) -> Result<SaveResult, String> {
         let now = now_ms();
         let count = count_text(content);
-        let mut stored = self.read_content(book_id, chapter_id);
+        let mut stored = self.read_content(book_id, chapter_id)?;
         let previous = stored.content.clone();
         let previous_chars = count_text(&previous).total;
         let changed = previous != content;
@@ -788,12 +805,14 @@ impl Store {
 
         let depth = self.settings.history_depth.clamp(1, MAX_HISTORY_HARD_CAP);
         let delta = self.settings.snapshot_char_delta;
-        let big_enough = previous_chars.abs_diff(count.total) >= delta;
+        let snapshot_chars = stored.versions.first().map(|v| v.chars).unwrap_or(previous_chars);
+        let big_enough = snapshot_chars.abs_diff(count.total) >= delta;
         let has_versions = !stored.versions.is_empty();
 
         let mut created = false;
         let mut version_id = String::new();
-        if changed && (force_version || big_enough || !has_versions) {
+        let manual = force_version && version_kind == "manual";
+        if manual || (changed && (force_version || big_enough || !has_versions)) {
             let kind = if version_kind.is_empty() { "auto" } else { version_kind };
             let label = if version_label.is_empty() {
                 match kind {
@@ -810,8 +829,8 @@ impl Store {
                 created_at: now,
                 kind: kind.to_string(),
                 label,
-                chars: previous_chars,
-                content: previous,
+                chars: if manual { count.total } else { previous_chars },
+                content: if manual { content.to_string() } else { previous },
             };
             version_id = v.id.clone();
             stored.versions.insert(0, v);
@@ -871,8 +890,8 @@ impl Store {
         })
     }
 
-    pub fn list_versions(&self, book_id: &str, chapter_id: &str) -> Vec<VersionMeta> {
-        self.read_content(book_id, chapter_id)
+    pub fn list_versions(&self, book_id: &str, chapter_id: &str) -> Result<Vec<VersionMeta>, String> {
+        Ok(self.read_content(book_id, chapter_id)?
             .versions
             .into_iter()
             .map(|v| VersionMeta {
@@ -882,14 +901,14 @@ impl Store {
                 label: v.label,
                 chars: v.chars,
             })
-            .collect()
+            .collect())
     }
 
-    pub fn version_content(&self, book_id: &str, chapter_id: &str, version_id: &str) -> Option<Version> {
-        self.read_content(book_id, chapter_id)
+    pub fn version_content(&self, book_id: &str, chapter_id: &str, version_id: &str) -> Result<Option<Version>, String> {
+        Ok(self.read_content(book_id, chapter_id)?
             .versions
             .into_iter()
-            .find(|v| v.id == version_id)
+            .find(|v| v.id == version_id))
     }
 
     pub fn restore_version(
@@ -899,7 +918,7 @@ impl Store {
         version_id: &str,
     ) -> Result<SaveResult, String> {
         let target = self
-            .version_content(book_id, chapter_id, version_id)
+            .version_content(book_id, chapter_id, version_id)?
             .ok_or_else(|| "找不到该历史版本".to_string())?;
         self.save_chapter(
             book_id,
@@ -915,7 +934,7 @@ impl Store {
     }
 
     pub fn delete_version(&self, book_id: &str, chapter_id: &str, version_id: &str) -> Result<usize, String> {
-        let mut stored = self.read_content(book_id, chapter_id);
+        let mut stored = self.read_content(book_id, chapter_id)?;
         stored.versions.retain(|v| v.id != version_id);
         let n = stored.versions.len();
         self.write_content(book_id, &stored)?;
@@ -929,7 +948,7 @@ impl Store {
     }
 
     pub fn upsert_card(&self, book_id: &str, mut card: Card) -> Result<Card, String> {
-        let mut cards = self.read_cards(book_id);
+        let mut cards = self.read_cards(book_id)?;
         let now = now_ms();
         if card.id.is_empty() {
             card.id = uuid::Uuid::new_v4().to_string();
@@ -950,7 +969,7 @@ impl Store {
     }
 
     pub fn delete_card(&self, book_id: &str, card_id: &str) -> Result<(), String> {
-        let mut cards = self.read_cards(book_id);
+        let mut cards = self.read_cards(book_id)?;
         cards.retain(|c| c.id != card_id);
         self.save_cards(book_id, &cards)
     }
@@ -1210,7 +1229,7 @@ impl Store {
         let mut fixed = Vec::new();
         for vol in &book.volumes {
             for ch in &vol.chapters {
-                let c = self.read_content(book_id, &ch.id);
+                let c = self.read_content(book_id, &ch.id)?;
                 let actual = count_text(&c.content).total;
                 if actual != ch.char_count {
                     fixed.push(format!("{} 字数 {} -> {}", ch.title, ch.char_count, actual));
@@ -1221,5 +1240,120 @@ impl Store {
             }
         }
         Ok(fixed)
+    }
+}
+
+#[cfg(test)]
+mod reliability_tests {
+    use super::*;
+
+    struct Workspace(PathBuf);
+    impl Workspace {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("heartwrite-test-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+        fn store(&self) -> Store { Store::load(self.0.clone()).unwrap() }
+    }
+    impl Drop for Workspace {
+        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+    }
+    fn draft(store: &mut Store) -> (String, String) {
+        let book = store.create_book("测试作品", "", "").unwrap();
+        (book.id, book.volumes[0].chapters[0].id.clone())
+    }
+    fn save(store: &mut Store, book: &str, chapter: &str, text: &str, manual: bool) -> Result<SaveResult, String> {
+        store.save_chapter(book, chapter, text, None, None, None, manual, "", if manual { "manual" } else { "auto" })
+    }
+
+    #[test]
+    fn replaces_existing_file_and_reloads_latest_text() {
+        let ws = Workspace::new();
+        let mut store = ws.store();
+        let (book, chapter) = draft(&mut store);
+        save(&mut store, &book, &chapter, "旧正文", false).unwrap();
+        save(&mut store, &book, &chapter, "新正文 hello 123", false).unwrap();
+        let reopened = ws.store();
+        assert_eq!(reopened.read_content(&book, &chapter).unwrap().content, "新正文 hello 123");
+    }
+
+    #[test]
+    fn corrupt_chapter_is_never_read_as_empty_or_overwritten() {
+        let ws = Workspace::new();
+        let mut store = ws.store();
+        let (book, chapter) = draft(&mut store);
+        save(&mut store, &book, &chapter, "珍贵正文", true).unwrap();
+        let path = store.chapter_path(&book, &chapter);
+        let damaged = "{\"content\":\"truncated";
+        fs::write(&path, damaged).unwrap();
+        assert!(store.read_content(&book, &chapter).unwrap_err().contains("损坏"));
+        assert!(save(&mut store, &book, &chapter, "", false).is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), damaged);
+        let options = crate::export::ExportOptions::default();
+        assert!(crate::export::run_export(&store, &book, &options).is_err());
+    }
+
+    #[test]
+    fn missing_saved_chapter_is_an_error_but_new_chapter_is_empty() {
+        let ws = Workspace::new();
+        let mut store = ws.store();
+        let (book, chapter) = draft(&mut store);
+        assert_eq!(store.read_content(&book, &chapter).unwrap().content, "");
+        save(&mut store, &book, &chapter, "保存过的正文", false).unwrap();
+        fs::remove_file(store.chapter_path(&book, &chapter)).unwrap();
+        assert!(store.read_content(&book, &chapter).unwrap_err().contains("缺失"));
+        assert!(save(&mut store, &book, &chapter, "", false).is_err());
+    }
+
+    #[test]
+    fn corrupt_registry_and_cards_are_preserved() {
+        let ws = Workspace::new();
+        let mut store = ws.store();
+        let (book, _) = draft(&mut store);
+        let path = store.cards_path(&book);
+        fs::write(&path, "broken").unwrap();
+        assert!(store.upsert_card(&book, Card::default()).is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), "broken");
+        fs::write(ws.0.join("books.json"), "broken").unwrap();
+        assert!(Store::load(ws.0.clone()).is_err());
+        assert_eq!(fs::read_to_string(ws.0.join("books.json")).unwrap(), "broken");
+    }
+
+    #[test]
+    fn manual_snapshot_contains_current_text_even_after_autosave() {
+        let ws = Workspace::new();
+        let mut store = ws.store();
+        let (book, chapter) = draft(&mut store);
+        save(&mut store, &book, &chapter, "自动保存后的正文", false).unwrap();
+        assert!(save(&mut store, &book, &chapter, "自动保存后的正文", true).unwrap().created_version);
+        let stored = store.read_content(&book, &chapter).unwrap();
+        assert_eq!(stored.versions[0].content, stored.content);
+        assert_eq!(stored.versions[0].kind, "manual");
+    }
+
+    #[test]
+    fn invalid_chapter_save_does_not_create_orphan_file() {
+        let ws = Workspace::new();
+        let mut store = ws.store();
+        let (book, _) = draft(&mut store);
+        assert!(save(&mut store, &book, "missing", "orphan", false).is_err());
+        assert!(!store.chapter_path(&book, "missing").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_replacement_preserves_old_file_and_new_temporary_file() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let ws = Workspace::new();
+        let path = ws.0.join("locked.json");
+        write_json_atomic(&path, &"old manuscript").unwrap();
+        // Deny delete sharing to reproduce a failed replacement on Windows.
+        let _locked = fs::OpenOptions::new().read(true).share_mode(1).open(&path).unwrap();
+        assert!(write_json_atomic(&path, &"new manuscript").is_err());
+        assert_eq!(read_json::<String>(&path).unwrap().unwrap(), "old manuscript");
+        let temp = fs::read_dir(&ws.0).unwrap().filter_map(Result::ok)
+            .find(|e| e.path().extension().is_some_and(|x| x == "tmp")).unwrap();
+        assert_eq!(read_json::<String>(&temp.path()).unwrap().unwrap(), "new manuscript");
     }
 }

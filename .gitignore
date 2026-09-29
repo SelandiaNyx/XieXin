@@ -13,6 +13,15 @@ src-tauri/target/
 .env.*
 .vscode/
 .idea/
+.self-check-data/
+.smoke-data/
+.probe/
+release/
+
+# Verification screenshots. Only the numbered, curated ones are kept in the
+# repository (e.g. .shots/01-app.png); everything else is local scratch work.
+.shots/*
+!.shots/[0-9][0-9]-*.png
 
 # OS metadata
 Thumbs.db
