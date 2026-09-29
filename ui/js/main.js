@@ -5,7 +5,7 @@ import { state, setState, subscribe, findChapter, bookCharCount, chapters } from
 import { toast, confirmDialog, closeModal, modalOpen, hhmmss, formatBytes, escapeHtml, promptDialog } from './ui.js';
 import { initSidebar, renderToc, refreshBook, createChapter, createVolume } from './sidebar.js';
 import {
-  initEditor, openChapter, saveChapter, saveNow, applyFonts, updateCounts, restartAutosave,
+  initEditor, openChapter, saveChapter, saveNow, withEditorTransition, flushPendingSave, applyFonts, updateCounts, restartAutosave,
   updateTodayChars, countLocal, insertText, editorEl, focusEditor, editorValue, renderSessionChip,
 } from './editor.js';
 import { initCards, renderCards } from './cards.js';
@@ -13,9 +13,12 @@ import * as dialogs from './dialogs.js';
 import * as pomodoro from './pomodoro.js';
 
 let lastSessionChapter = '';
+let tocBook = null;
+let tocChapter = '';
+let tocSaving = false;
 
 /** 前端资源构建标记：改动 ui 后改这里，便于确认应用加载的是最新界面。 */
-const UI_BUILD = 'ui-2026-09-22-D';
+const UI_BUILD = 'ui-2026-09-28-studio';
 
 window.__moge = {
   openChapter,
@@ -44,6 +47,7 @@ async function boot() {
   initCards();
   dialogs.initFindBar();
   bindGlobalUi();
+  await bindCloseGuard();
   // 必须在编辑器初始化之后：字号/行距等样式需要作用于已存在的 DOM
   applyFonts();
 
@@ -115,6 +119,16 @@ async function boot() {
 function bindGlobalUi() {
   const app = document.getElementById('app');
   const syncLayout = () => {
+    app.dataset.busy = state.transitioning ? 'yes' : 'no';
+    app.dataset.haschapter = state.activeChapterId ? 'yes' : 'no';
+    document.getElementById('emptyTitle').textContent = state.book ? '为故事写下第一章' : '每一个故事，都从这里开始';
+    document.getElementById('emptyStart').textContent = state.book ? '新建章节' : '创建作品';
+    for (const id of ['saveBtn','oneClickFormat','snapshotBtn','historyBtn']) {
+      document.getElementById(id).disabled = !state.activeChapterId || state.transitioning;
+    }
+    document.getElementById('focusBtn').setAttribute('aria-pressed', String(state.focus));
+    document.getElementById('toggleSidebar').setAttribute('aria-expanded', String(state.sidebarOpen));
+    document.getElementById('toggleInspector').setAttribute('aria-expanded', String(state.inspectorOpen));
     app.dataset.sidebar = state.sidebarOpen ? 'open' : 'closed';
     app.dataset.inspector = state.inspectorOpen ? 'open' : 'closed';
     app.dataset.focus = state.focus ? 'on' : 'off';
@@ -144,6 +158,11 @@ function bindGlobalUi() {
     bottomCollapsed = !bottomCollapsed;
     setBottomCollapsed(bottomCollapsed);
   };
+  document.getElementById('saveBtn').onclick = () => saveNow(false);
+  document.getElementById('focusBtn').onclick = () => setState({ focus: !state.focus });
+  document.getElementById('emptyStart').onclick = () => state.book ? createChapter() : dialogs.openBookPicker();
+  document.getElementById('emptyImport').onclick = () => state.book ? dialogs.importTextDialog() : dialogs.openBookPicker();
+  document.getElementById('quickSearch').onclick = () => dialogs.openSearch();
   document.getElementById('openSettings').onclick = () => dialogs.openSettings();
   document.getElementById('exportBtn').onclick = () => dialogs.openExport();
   document.getElementById('historyBtn').onclick = () => dialogs.openHistory();
@@ -166,17 +185,10 @@ function bindGlobalUi() {
   });
 
   window.addEventListener('keydown', onGlobalKey);
-  window.addEventListener('beforeunload', () => {
-    if (state.dirty && state.book && state.activeChapterId) {
-      api.saveChapter({
-        bookId: state.book.id,
-        chapterId: state.activeChapterId,
-        content: editorValue(),
-        title: document.getElementById('chapterTitleBig').value,
-        status: document.getElementById('statusSelect').value,
-        manualSnapshot: false,
-      }).catch(() => {});
-    }
+  window.addEventListener('beforeunload', (event) => {
+    if (!state.dirty && !state.saving) return;
+    event.preventDefault();
+    event.returnValue = '';
   });
   window.addEventListener('online', () => toast('网络已连接（写心完全离线运行）', 'ok'));
   void confirmDialog;
@@ -213,36 +225,38 @@ function handleBottomAction(action, chip) {
  * 排版前的内容会先存成一个历史版本，并放进撤销栈（Ctrl+Z / 状态栏「撤销排版」）。
  */
 async function runOneClickFormat() {
-  if (!state.book || !state.activeChapterId) { toast('请先打开一章', 'warn'); return; }
-  const view = editorEl();
-  const before = view.value;
-  if (!before.trim()) { toast('本章还没有内容', 'warn'); return; }
-  const title = document.getElementById('chapterTitleBig').value.trim();
-  try {
-    const report = await api.format(before, state.settings.oneClickFormatRule, title, true);
-    if (!report.changed) {
-      toast('正文已经是规范格式，无需整理', 'ok');
-      return;
-    }
-    // 1) 先把排版前的正文存成一个历史版本
-    await saveChapter({ manualSnapshot: true, silent: true, label: '一键排版前存档' });
-    // 2) 再套用排版结果
-    undoStack.push({ chapterId: state.activeChapterId, content: before, at: Date.now() });
+  if (!state.activeChapterId) return;
+  await withEditorTransition(async () => {
+    const view = editorEl();
+    const before = view.value;
+    if (!before.trim()) { toast('本章还没有内容', 'warn'); return false; }
+    const report = await api.format(before, state.settings.oneClickFormatRule,
+      document.getElementById('chapterTitleBig').value.trim(), true);
+    if (!report.changed) { toast('正文已经是规范格式', 'ok'); return true; }
+    if (!await saveChapter({ manualSnapshot: true, silent: true, label: '一键排版前存档' })) return false;
+    undoStack.push({ bookId: state.book.id, chapterId: state.activeChapterId, content: before, after: report.content });
     view.value = report.content;
     view.dispatchEvent(new Event('input', { bubbles: true }));
-    await saveChapter({ silent: true });
-    await refreshBook();
-    updateCounts();
-    renderUndoButton();
-    toast(
-      `排版完成：${report.before.total} → ${report.after.total} 字（缩进 ${ruleLabel(report.rule)}）`,
-      'ok',
-      '排版前的正文已存为历史版本，也可点状态栏「撤销排版」还原',
-    );
-  } catch (e) {
-    log(`[format] 失败: ${e && e.stack ? e.stack : e}`);
-    toast(`排版失败：${e.message}`, 'err');
-  }
+    if (!await saveChapter({ silent: true })) return false;
+    await refreshBook(); renderUndoButton();
+    toast('排版完成', 'ok', '排版前已创建快照，可撤销本次排版。');
+    return true;
+  });
+}
+
+// A normal close waits for the same save barrier as chapter navigation.
+async function bindCloseGuard() {
+  const win = window.__TAURI__?.window?.getCurrentWindow?.();
+  if (!win) return;
+  await win.onCloseRequested(async event => {
+    event.preventDefault();
+    log('[close] 等待保存完成');
+    await withEditorTransition(async () => {
+      await api.uiLog('[close] 保存完成，关闭窗口');
+      await win.destroy();
+      return true;
+    });
+  });
 }
 
 // ------------------------------------------------------------------ 排版撤销
@@ -253,26 +267,23 @@ export function renderUndoButton() {
   const btn = document.getElementById('undoFormatBtn');
   if (!btn) return;
   const top = undoStack[undoStack.length - 1];
-  const available = top && top.chapterId === state.activeChapterId;
+  const available = top && top.bookId === state.book?.id && top.chapterId === state.activeChapterId && editorValue() === top.after;
   btn.hidden = !available;
   btn.textContent = available ? '↺ 撤销排版' : '';
 }
 
 async function undoFormat() {
   const top = undoStack[undoStack.length - 1];
-  if (!top || top.chapterId !== state.activeChapterId) {
-    toast('没有可撤销的排版操作', 'warn');
-    return;
-  }
-  undoStack.pop();
-  const view = editorEl();
-  view.value = top.content;
-  view.dispatchEvent(new Event('input', { bubbles: true }));
-  await saveChapter({ silent: true });
-  await refreshBook();
-  updateCounts();
-  renderUndoButton();
-  toast('已撤销排版', 'ok');
+  if (!top || top.bookId !== state.book?.id || top.chapterId !== state.activeChapterId || editorValue() !== top.after) return;
+  await withEditorTransition(async () => {
+    undoStack.pop();
+    const view = editorEl(); view.value = top.content;
+    view.dispatchEvent(new Event('input', { bubbles: true }));
+    const saved = await saveChapter({ silent: true });
+    renderUndoButton();
+    if (!saved) return false;
+    await refreshBook(); toast('已撤销排版', 'ok'); return true;
+  });
 }
 
 function ruleLabel(rule) {
@@ -293,7 +304,8 @@ async function onGlobalKey(e) {
   if (!ctrl) return;
   const key = e.key.toLowerCase();
   if (key === 'z' && !e.shiftKey) {
-    if (undoStack.length) { e.preventDefault(); await undoFormat(); }
+    const top = undoStack[undoStack.length - 1];
+    if (!modalOpen() && e.target === editorEl() && top?.bookId === state.book?.id && top?.chapterId === state.activeChapterId && editorValue() === top.after) { e.preventDefault(); await undoFormat(); }
     return;
   }
   if (key === 's' && e.shiftKey) { e.preventDefault(); await saveNow(true); return; }
@@ -301,7 +313,7 @@ async function onGlobalKey(e) {
   if (key === 'f' && e.shiftKey) { e.preventDefault(); await runOneClickFormat(); return; }
   if (key === 'e') { e.preventDefault(); dialogs.openExport(); return; }
   if (key === 'y') { e.preventDefault(); dialogs.openHistory(); return; }
-  if (key === 'f') { e.preventDefault(); dialogs.toggleFindBar(true); return; }
+  if (key === 'f') { e.preventDefault(); dialogs.openSearch(); return; }
   if (key === 'h') { e.preventDefault(); dialogs.toggleFindBar(true); document.getElementById('replaceInput').focus(); return; }
   if (key === 'p') { e.preventDefault(); pomodoro.toggle(); return; }
   if (key === 'n' && e.altKey) { e.preventDefault(); await createChapter(); return; }
@@ -340,8 +352,12 @@ function startSessionTimer() {
 // ------------------------------------------------------------------ 番茄钟面板（实现见 pomodoro.js）
 
 subscribe((s) => {
+  const renderDirectory = s.book !== tocBook || s.activeChapterId !== tocChapter || (tocSaving && !s.saving);
+  tocBook = s.book; tocChapter = s.activeChapterId; tocSaving = s.saving;
+  if (renderDirectory) renderToc();
   const app = document.getElementById('app');
   app.dataset.hasbook = s.book ? 'yes' : 'no';
+  renderUndoButton();
   // 切换章节时重置"本次"统计基线，并刷新撤销按钮可用状态
   if (s.activeChapterId && s.activeChapterId !== lastSessionChapter) {
     lastSessionChapter = s.activeChapterId;

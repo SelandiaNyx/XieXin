@@ -30,6 +30,7 @@ export const state = {
   content: '',
   dirty: false,
   saving: false,
+  transitioning: false,
   lastSavedAt: 0,
   saveState: '就绪',
 
@@ -68,7 +69,7 @@ export function chapters() {
 }
 
 export function findChapter(chapterId) {
-  return chapters().find((c) => c.id === chapterId) || null;
+  return state.book?.volumes.flatMap(v => v.chapters).find(c => c.id === chapterId) || null;
 }
 
 export function findVolumeOf(chapterId) {

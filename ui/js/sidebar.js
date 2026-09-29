@@ -4,6 +4,7 @@ import { api } from './api.js';
 import { state, setState, emit, findChapter, statusInfo } from './store.js';
 import { toast, confirmDialog, promptDialog, escapeHtml } from './ui.js';
 import { bookCharCount, bookChapterCount } from './store.js';
+import { deleteFromBook } from './editor.js';
 
 const els = {};
 let dragChapterId = null;
@@ -261,14 +262,8 @@ async function removeChapter(id) {
   const ok = await confirmDialog('删除章节', `确定删除《${ch.title}》吗？正文与历史版本会移入回收站。`, { okText: '删除', danger: true });
   if (!ok) return;
   try {
-    const book = await api.deleteChapter(state.book.id, id);
-    setState({ book });
+    if (!await deleteFromBook(() => api.deleteChapter(state.book.id, id))) return;
     renderToc();
-    if (state.activeChapterId === id) {
-      const next = book.volumes.flatMap((v) => v.chapters)[0];
-      if (next) await window.__moge.openChapter(next.id);
-      else setState({ activeChapterId: '', content: '' });
-    }
     toast('章节已删除', 'ok');
   } catch (e) { toast(e.message, 'err'); }
 }
@@ -283,14 +278,8 @@ async function removeVolume(id) {
   );
   if (!ok) return;
   try {
-    const book = await api.deleteVolume(state.book.id, id, true);
-    setState({ book });
+    if (!await deleteFromBook(() => api.deleteVolume(state.book.id, id, true))) return;
     renderToc();
-    if (!book.volumes.some((v) => v.chapters.some((c) => c.id === state.activeChapterId))) {
-      const next = book.volumes.flatMap((v) => v.chapters)[0];
-      if (next) await window.__moge.openChapter(next.id);
-      else setState({ activeChapterId: '', content: '' });
-    }
     toast('卷已删除', 'ok');
   } catch (e) { toast(e.message, 'err'); }
 }

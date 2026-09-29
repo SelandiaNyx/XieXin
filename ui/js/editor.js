@@ -2,12 +2,12 @@
 
 import { api } from './api.js';
 import { state, setState, emit, findChapter, bookCharCount, bookChapterCount, statusInfo } from './store.js';
-import { toast, formatTime, animateNumber, withViewTransition } from './ui.js';
+import { toast, formatTime, animateNumber } from './ui.js';
 
 const els = {};
 let autosaveTimer = null;
 let clockTimer = null;
-let lastSavedContent = '';
+let editRevision = 0;
 let savePromise = null;
 let applyingRemote = false;
 
@@ -65,8 +65,9 @@ export function initEditor(hooks = {}) {
     renderToc();
   });
 
-  document.getElementById('saveState').addEventListener('click', () => window.__moge.saveNow(true));
+  document.getElementById('saveState').addEventListener('click', () => window.__moge.saveNow(false));
 
+  syncEditorAvailability();
   startClock();
   startAutosave();
   void hooks;
@@ -84,64 +85,121 @@ async function persistChapterTitle(immediate = false) {
 
 // ------------------------------------------------------------------ 打开
 
-export async function openChapter(chapterId) {
-  if (!chapterId) return;
-  if (state.book && chapterId === state.activeChapterId && !state.dirty) return;
-  if (state.dirty && state.activeChapterId) await saveChapter({ silent: true });
+// Navigation and destructive editor operations hold a short input lock while
+// pending saves finish. Failed reads leave the current document untouched.
+export async function withEditorTransition(action) {
+  if (state.transitioning) return false;
+  setState({ transitioning: true });
+  syncEditorAvailability();
   try {
-    const res = await api.readChapter(state.book.id, chapterId);
-    const ch = findChapter(chapterId);
-    const vol = state.book.volumes.find((v) => v.chapters.some((c) => c.id === chapterId));
-    const versions = await api.listVersions(state.book.id, chapterId);
-    const isSwitch = Boolean(state.activeChapterId) && state.activeChapterId !== chapterId;
-
-    // 正文与标题的替换放进 View Transition，切章时有系统级淡入淡出
-    const applyChapter = () => {
-      applyingRemote = true;
-      els.view.value = res.content;
-      autoGrow();
-      applyingRemote = false;
-      els.titleBig.value = ch ? ch.title : '';
-      els.titleTop.value = ch ? ch.title : '';
-      els.statusSelect.value = (ch && ch.status) || 'draft';
-      // 历史数据里的未知状态：临时补一个选项，保证下拉框有显示
-      if (els.statusSelect.value !== ((ch && ch.status) || 'draft')) {
-        const opt = document.createElement('option');
-        opt.value = (ch && ch.status) || 'draft';
-        opt.textContent = `${opt.value}（旧）`;
-        els.statusSelect.appendChild(opt);
-        els.statusSelect.value = opt.value;
-      }
-      els.crumbVolume.textContent = vol ? vol.title : '-';
-      if (isSwitch) {
-        els.page.classList.remove('paper-enter');
-        void els.page.offsetWidth;
-        els.page.classList.add('paper-enter');
-      }
-    };
-    if (isSwitch) withViewTransition(applyChapter);
-    else applyChapter();
-
-    lastSavedContent = res.content;
-    setState({
-      activeChapterId: chapterId,
-      activeVolumeId: vol ? vol.id : state.activeVolumeId,
-      content: res.content,
-      versions,
-      dirty: false,
-      saveState: '已保存',
-      lastSavedAt: res.createdAt || Date.now(),
-    });
-    markSaveState('ok', '已保存');
-    updateCounts();
-    updateCursorInfo();
-    updateVersionInfo(versions.length);
-    applyStatusStyle();
-    return true;
+    if (!await flushPendingSave()) return false;
+    return await action();
   } catch (e) {
-    toast(`打开章节失败：${e.message}`, 'err');
+    toast(e.message, 'err');
     return false;
+  } finally {
+    setState({ transitioning: false });
+    syncEditorAvailability();
   }
+}
+
+export async function flushPendingSave() {
+  if (savePromise && !await savePromise) return false;
+  while (state.dirty && state.activeChapterId) {
+    if (!await saveChapter({ silent: true })) return false;
+  }
+  return true;
+}
+
+export function syncEditorAvailability() {
+  const blocked = Boolean(state.transitioning || !state.activeChapterId);
+  for (const el of [els.view, els.titleBig, els.titleTop]) el.readOnly = blocked;
+  els.statusSelect.disabled = blocked;
+}
+
+export function clearEditor() {
+  els.view.value = '';
+  els.titleBig.value = '';
+  els.titleTop.value = '';
+  els.crumbVolume.textContent = '未选择章节';
+  editRevision += 1;
+  setState({ activeChapterId: '', activeVolumeId: '', content: '', versions: [], dirty: false });
+  syncEditorAvailability();
+  updateCounts();
+  updateVersionInfo(0);
+  markSaveState('ok', '就绪');
+}
+
+async function loadChapter(book, chapterId, cards = state.cards) {
+  const vol = book.volumes.find(v => v.chapters.some(c => c.id === chapterId));
+  const ch = vol?.chapters.find(c => c.id === chapterId);
+  if (!ch) throw new Error('找不到该章节');
+  const [res, versions] = await Promise.all([
+    api.readChapter(book.id, chapterId), api.listVersions(book.id, chapterId),
+  ]);
+  applyingRemote = true;
+  els.view.value = res.content;
+  els.titleBig.value = ch.title;
+  els.titleTop.value = ch.title;
+  els.statusSelect.value = ch.status || 'draft';
+  if (els.statusSelect.value !== (ch.status || 'draft')) {
+    const opt = document.createElement('option');
+    opt.value = ch.status || 'draft'; opt.textContent = opt.value + '（旧）';
+    els.statusSelect.appendChild(opt); els.statusSelect.value = opt.value;
+  }
+  els.crumbVolume.textContent = vol.title;
+  editRevision += 1;
+  setState({ book, cards, activeChapterId: chapterId, activeVolumeId: vol.id,
+    content: res.content, versions, dirty: false, lastSavedAt: res.createdAt || Date.now() });
+  applyingRemote = false;
+  autoGrow();
+  markSaveState('ok', '已保存');
+  updateCounts(); updateCursorInfo(); updateVersionInfo(versions.length); applyStatusStyle();
+  // Keep the textarea and chapter identity in the same synchronous update.
+  // View-transition callbacks may run after another save has begun.
+  els.page.classList.remove('paper-enter');
+  void els.page.offsetWidth;
+  els.page.classList.add('paper-enter');
+  return true;
+}
+
+export async function openChapter(chapterId, { force = false } = {}) {
+  if (!chapterId || !state.book) return false;
+  if (!force && chapterId === state.activeChapterId) return true;
+  return withEditorTransition(() => loadChapter(state.book, chapterId));
+}
+
+export async function openBookInEditor(bookId) {
+  return withEditorTransition(async () => {
+    const payload = await api.openBook(bookId);
+    const all = payload.book.volumes.flatMap(v => v.chapters);
+    const target = all.find(c => c.id === state.settings.lastChapterId) || all[0];
+    if (target) return loadChapter(payload.book, target.id, payload.cards);
+    setState({ book: payload.book, cards: payload.cards });
+    clearEditor();
+    return true;
+  });
+}
+
+export async function restoreChapterVersion(bookId, chapterId, versionId) {
+  return withEditorTransition(async () => {
+    await api.restoreVersion(bookId, chapterId, versionId);
+    const payload = await api.openBook(bookId);
+    return loadChapter(payload.book, chapterId, payload.cards);
+  });
+}
+
+export async function deleteFromBook(action) {
+  return withEditorTransition(async () => {
+    const book = await action();
+    setState({ book });
+    if (!book.volumes.some(v => v.chapters.some(c => c.id === state.activeChapterId))) {
+      clearEditor();
+      const first = book.volumes.flatMap(v => v.chapters)[0];
+      if (first) await loadChapter(book, first.id);
+    }
+    return true;
+  });
 }
 
 // ------------------------------------------------------------------ 编辑
@@ -162,7 +220,7 @@ function onInput(e) {
   const text = els.view.value;
   if (text !== before) {
     const delta = countLocal(text) - countLocal(before);
-    if (delta > 0) addSessionChars(delta);
+    if (delta > 0) { addSessionChars(delta); updateTodayChars(delta); }
   }
   setState({ content: text });
   markDirty();
@@ -171,24 +229,19 @@ function onInput(e) {
 }
 
 function onKeyDown(e) {
+  if (e.isComposing || e.keyCode === 229 || state.transitioning || !state.activeChapterId) return;
   // Tab 缩进
   if (e.key === 'Tab') {
     e.preventDefault();
     insertText('\u3000\u3000');
     return;
   }
-  // 引号/括号配对
-  const pairs = { '"': '“”', "'": '‘’', '（': '）', '(': '）', '「': '」', '《': '》', '【': '】' };
-  if (e.key === '"' || e.key === "'") {
+  const pairs = { '"': '“”', "'": '‘’', '（': '（）', '(': '（）', '「': '「」', '《': '《》', '【': '【】' };
+  if (pairs[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
-    const sel = els.view.value.slice(els.view.selectionStart, els.view.selectionEnd);
-    if (sel) insertText(`“${sel}”`);
-    else insertText('“”', 1);
-    return;
-  }
-  if (pairs[e.key] && e.key !== '"' && e.key !== "'") {
-    e.preventDefault();
-    insertText(pairs[e.key][0] + pairs[e.key][1], 1);
+    const [open, close] = pairs[e.key];
+    const selection = els.view.value.slice(els.view.selectionStart, els.view.selectionEnd);
+    insertText(open + selection + close, selection ? null : 1);
     return;
   }
   if (e.key === 'Enter') {
@@ -205,6 +258,7 @@ function onKeyDown(e) {
 }
 
 export function insertText(text, caretOffset = null) {
+  if (state.transitioning || !state.activeChapterId) return;
   const view = els.view;
   view.focus();
   const start = view.selectionStart;
@@ -230,6 +284,7 @@ function autoGrow() {
 }
 
 export function markDirty() {
+  editRevision += 1;
   setState({ dirty: true, saveState: '有未保存修改' });
   markSaveState('dirty', '未保存');
 }
@@ -264,52 +319,51 @@ function startClock() {
 
 // ------------------------------------------------------------------ 保存
 
-export async function saveChapter({ manualSnapshot = false, silent = false, label = '' } = {}) {
-  if (!state.book || !state.activeChapterId) return null;
-  if (savePromise) await savePromise.catch(() => {});
+export function saveChapter({ manualSnapshot = false, silent = false, label = '' } = {}) {
+  if (!state.book || !state.activeChapterId) return Promise.resolve(null);
   const payload = {
-    bookId: state.book.id,
-    chapterId: state.activeChapterId,
-    content: els.view.value,
+    bookId: state.book.id, chapterId: state.activeChapterId, content: els.view.value,
     title: els.titleBig.value.trim() || findChapter(state.activeChapterId)?.title || '',
-    summary: findChapter(state.activeChapterId)?.summary || '',
-    status: els.statusSelect.value,
-    manualSnapshot,
-    snapshotLabel: label,
+    summary: findChapter(state.activeChapterId)?.summary || '', status: els.statusSelect.value,
+    manualSnapshot, snapshotLabel: label,
   };
-  state.saving = true;
-  markSaveState('dirty', '保存中…');
-  savePromise = api.saveChapter(payload);
-  try {
-    const res = await savePromise;
-    lastSavedContent = payload.content;
-    setState({ dirty: false, saving: false, content: payload.content, lastSavedAt: res.updatedAt });
-    markSaveState('ok', `已保存 ${formatTime(res.updatedAt).slice(11)}`);
-    updateVersionInfo(res.versions);
-    const ch = findChapter(state.activeChapterId);
-    if (ch) {
-      ch.charCount = res.charCount;
-      ch.versions = res.versions;
-      ch.title = payload.title;
-      ch.updatedAt = res.updatedAt;
+  const revision = editRevision;
+  const previous = savePromise || Promise.resolve();
+  // Capture a document at the call site; serialize the complete operation,
+  // including metadata updates, so queued saves cannot target another chapter.
+  const task = previous.catch(() => {}).then(async () => {
+    setState({ saving: true });
+    markSaveState('dirty', '保存中…');
+    try {
+      const res = await api.saveChapter(payload);
+      if (state.book?.id === payload.bookId && state.activeChapterId === payload.chapterId) {
+        const unchanged = revision === editRevision && els.view.value === payload.content
+          && (els.titleBig.value.trim() || payload.title) === payload.title
+          && els.statusSelect.value === payload.status;
+        setState({ dirty: !unchanged, lastSavedAt: res.updatedAt });
+        markSaveState(unchanged ? 'ok' : 'dirty', unchanged ? '已保存 ' + formatTime(res.updatedAt).slice(11) : '有新修改待保存');
+        const ch = findChapter(payload.chapterId);
+        if (ch) Object.assign(ch, { charCount: res.charCount, versions: res.versions,
+          title: payload.title, status: payload.status, updatedAt: res.updatedAt });
+        updateVersionInfo(res.versions); updateCounts();
+        if (manualSnapshot) setState({ versions: await api.listVersions(payload.bookId, payload.chapterId) });
+        if (!silent) toast(manualSnapshot ? '已保存并创建快照' : '已保存', 'ok');
+        emit();
+      }
+      return res;
+    } catch (e) {
+      if (state.book?.id === payload.bookId && state.activeChapterId === payload.chapterId) {
+        setState({ dirty: true });
+        markSaveState('err', '保存失败 · 点击重试');
+      }
+      toast('保存失败：' + e.message, 'err', '正文仍保留在编辑区，请重试保存。');
+      return null;
     }
-    updateCounts();
-    if (manualSnapshot) {
-      toast(`已保存并创建快照（${res.versions} 个版本）`, 'ok', `本章 ${res.charCount} 字`);
-      setState({ versions: await api.listVersions(state.book.id, state.activeChapterId) });
-    } else if (!silent) {
-      toast(`已保存 ${res.charCount} 字`, 'ok');
-    }
-    emit();
-    return res;
-  } catch (e) {
-    setState({ saving: false });
-    markSaveState('err', '保存失败');
-    toast(`保存失败：${e.message}`, 'err');
-    return null;
-  } finally {
-    savePromise = null;
-  }
+  }).finally(() => {
+    if (savePromise === task) { savePromise = null; setState({ saving: false }); }
+  });
+  savePromise = task;
+  return task;
 }
 
 export async function saveNow(manual = false) {
@@ -344,6 +398,15 @@ export function updateCounts() {
     bookChars + (chapterChars - (findChapter(state.activeChapterId)?.charCount || 0)),
   );
   animateNumber(els.wcToday, todayData.chars || 0);
+  const goal = Math.max(1, Number(state.settings.dailyGoal) || 3000);
+  const progress = document.getElementById('dailyProgress');
+  if (progress) {
+    const percent = Math.min(100, Math.round(100 * (todayData.chars || 0) / goal));
+    progress.setAttribute('aria-valuenow', String(percent));
+    progress.querySelector('i').style.width = `${percent}%`;
+    document.getElementById('dailyGoalValue').textContent = `${(todayData.chars || 0).toLocaleString()} 字`;
+    document.getElementById('dailyGoalCaption').textContent = `目标 ${goal.toLocaleString()} 字 · 已完成 ${percent}%`;
+  }
   renderSessionChip();
 }
 
@@ -372,7 +435,7 @@ export function updateTodayChars(chars) {
   } catch { /* ignore */ }
   data.date = today;
   data.chars = (data.chars || 0) + chars;
-  localStorage.setItem(key, JSON.stringify(data));
+  try { localStorage.setItem(key, JSON.stringify(data)); } catch { /* Editing must remain available. */ }
   els.wcToday.textContent = data.chars.toLocaleString();
 }
 
@@ -389,42 +452,19 @@ export function todayChars() {
 
 /** 与 Rust 端一致的字数算法（本地即时反馈用）。 */
 export function countLocal(text) {
+  // Exactly the same grouping as Rust: each CJK character is one unit;
+  // each contiguous non-CJK letter/number run is one unit.
   let total = 0;
-  let inWord = false;
-  let inDigit = false;
-  const isCjk = (ch) => {
-    const c = ch.codePointAt(0);
-    return (
-      (c >= 0x3400 && c <= 0x4dbf) ||
-      (c >= 0x4e00 && c <= 0x9fff) ||
-      (c >= 0xf900 && c <= 0xfaff) ||
-      (c >= 0x3040 && c <= 0x30ff) ||
-      (c >= 0xac00 && c <= 0xd7af) ||
-      (c >= 0x20000 && c <= 0x2fa1f)
-    );
-  };
+  let inRun = false;
   for (const ch of text) {
-    if (isCjk(ch)) {
-      if (inWord) { total += 1; inWord = false; }
-      if (inDigit) { total += 1; inDigit = false; }
-      total += 1;
-    } else if (/[A-Za-z]/.test(ch)) {
-      if (inDigit) { total += 1; inDigit = false; }
-      if (!inWord) { total += 1; inWord = true; }
-    } else if (/[0-9]/.test(ch)) {
-      if (inWord) { total += 1; inWord = false; }
-      if (!inDigit) { total += 1; inDigit = true; }
-    } else if (/[\p{L}\p{N}]/u.test(ch)) {
-      if (!inWord) { total += 1; inWord = true; }
-    } else if (inWord) {
-      total += 1; inWord = false;
-      if (inDigit) inDigit = false;
-    } else if (inDigit) {
-      total += 1; inDigit = false;
-    }
+    const c = ch.codePointAt(0);
+    const cjk = (c >= 0x3400 && c <= 0x4dbf) || (c >= 0x4e00 && c <= 0x9fff)
+      || (c >= 0xf900 && c <= 0xfaff) || (c >= 0x3040 && c <= 0x30ff)
+      || (c >= 0xac00 && c <= 0xd7af) || (c >= 0x20000 && c <= 0x2fa1f);
+    if (cjk) { total++; inRun = false; }
+    else if (/[\p{L}\p{N}]/u.test(ch)) { if (!inRun) total++; inRun = true; }
+    else inRun = false;
   }
-  if (inWord) total += 1;
-  if (inDigit) total += 1;
   return total;
 }
 

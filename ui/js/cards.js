@@ -28,7 +28,10 @@ export function renderCards() {
   const box = document.getElementById('cards');
   document.querySelectorAll('#cardTabs .tab').forEach((t) => {
     t.classList.toggle('active', t.dataset.kind === state.cardKind);
+    t.setAttribute('aria-selected', String(t.dataset.kind === state.cardKind));
   });
+  document.getElementById('cardCount').textContent = String(state.cards.length);
+  document.getElementById('insertCardContent').disabled = !state.cards.some(c => c.id === state.activeCardId);
   if (!state.book) {
     box.innerHTML = `<div class="cards-empty">打开一本书后<br/>即可记录人物与灵感</div>`;
     return;

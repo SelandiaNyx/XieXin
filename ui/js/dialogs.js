@@ -9,7 +9,7 @@ import {
   formatBytes, formatTime, relativeTime, hhmmss,
 } from './ui.js';
 import {
-  saveChapter, applyFonts, restartAutosave, insertText, updateCounts, todayChars,
+  saveChapter, openBookInEditor, restoreChapterVersion, flushPendingSave, withEditorTransition, clearEditor, applyFonts, restartAutosave, insertText, updateCounts, todayChars,
 } from './editor.js';
 import { refreshBook, renderToc } from './sidebar.js';
 
@@ -68,7 +68,16 @@ export function openBookPicker() {
             const ok = await confirmDialog('删除书籍', `确定删除《${book.title}》吗？相关文件会移入回收站。`, { okText: '删除', danger: true });
             if (!ok) return;
             try {
-              await api.deleteBook(id);
+              if (!await withEditorTransition(async () => {
+                await api.deleteBook(id);
+                if (state.book?.id === id) {
+                  setState({ book: null, cards: [] });
+                  clearEditor();
+                  const { renderCards } = await import('./cards.js');
+                  renderCards();
+                }
+                return true;
+              })) return;
               await reloadWorkspace();
               closeModal();
               openBookPicker();
@@ -162,20 +171,11 @@ function openBookMeta(bookId) {
 }
 
 export async function switchBook(bookId) {
-  if (state.dirty) await saveChapter({ silent: true });
-  try {
-    const payload = await api.openBook(bookId);
-    setState({ book: payload.book, cards: payload.cards, versions: [], activeChapterId: '', content: '' });
-    const last = state.settings.lastChapterId;
-    const all = payload.book.volumes.flatMap((v) => v.chapters);
-    const target = all.find((c) => c.id === last) || all[0];
-    if (target) await window.__moge.openChapter(target.id);
-    renderToc();
-    const { renderCards } = await import('./cards.js');
-    renderCards();
-  } catch (e) {
-    toast(`打开书籍失败：${e.message}`, 'err');
-  }
+  if (!await openBookInEditor(bookId)) return false;
+  renderToc();
+  const { renderCards } = await import('./cards.js');
+  renderCards();
+  return true;
 }
 
 export async function reloadWorkspace() {
@@ -607,6 +607,7 @@ export function openExport() {
           return;
         }
         try {
+          if (!await flushPendingSave()) return;
           const res = await api.exportBook(state.book.id, opt);
           const dir = res.path.replace(/[\\/][^\\/]*$/, '');
           const next = { ...state.settings, lastExportDir: dir };
@@ -860,9 +861,8 @@ export async function openHistory() {
               const ok = await confirmDialog('回滚版本', '当前正文会先被存为一个新版本，然后回滚到你选择的历史版本。继续吗？', { okText: '回滚' });
               if (!ok) return;
               try {
-                await api.restoreVersion(bookId, chapterId, vid);
+                if (!await restoreChapterVersion(bookId, chapterId, vid)) return;
                 closeModal();
-                await window.__moge.openChapter(chapterId);
                 await refreshBook();
                 toast('已回滚到历史版本', 'ok');
               } catch (e) { toast(e.message, 'err'); }
