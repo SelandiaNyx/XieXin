@@ -404,8 +404,65 @@ pub fn default_data_dir() -> PathBuf {
     base.join(APP_DIR)
 }
 
+/// 应用改名前用过的数据目录名（墨阁 → 写心）。
+const LEGACY_APP_DIRS: [&str; 2] = ["com.moge.novelmanager", "com.heartwrite.novelmanager"];
+
+fn looks_like_writing_data(dir: &Path) -> bool {
+    dir.join("books.json").is_file()
+        || dir.join("settings.json").is_file()
+        || dir.join("content").is_dir()
+}
+
+/// 首次以新名字启动时，把旧数据目录整体搬过来（只在目标还不存在时执行，避免覆盖）。
+/// 找不到可搬的目录、或搬不动时都只是安静地返回，不影响启动。
+fn try_migrate_legacy_data(root: &Path) {
+    if root.exists() || root.as_os_str().is_empty() {
+        return;
+    }
+    let Some(parent) = root.parent() else { return };
+    let target_name = root.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    for legacy_name in LEGACY_APP_DIRS {
+        if legacy_name == target_name {
+            continue;
+        }
+        let legacy = parent.join(legacy_name);
+        if !looks_like_writing_data(&legacy) {
+            continue;
+        }
+        // 先在同一卷内改名（快、原子）；跨卷时退回递归复制，两个目录都不删。
+        let moved = fs::rename(&legacy, root).is_ok();
+        if !moved && copy_dir_all(&legacy, root).is_err() {
+            let _ = fs::remove_dir_all(root);
+            continue;
+        }
+        eprintln!(
+            "[写心] 已把原「{}」的稿件迁移到「{}」{}",
+            legacy_name,
+            target_name,
+            if moved { "" } else { "（跨盘复制，旧目录请自行确认后删除）" }
+        );
+        return;
+    }
+}
+
+fn copy_dir_all(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 impl Store {
     pub fn load(root: PathBuf) -> Result<Self, String> {
+        // 改名前的老用户：把稿件搬过来，再继续正常加载
+        try_migrate_legacy_data(&root);
         fs::create_dir_all(&root).map_err(|e| format!("无法创建数据目录 {}: {e}", root.display()))?;
         let content_dir = root.join("content");
         fs::create_dir_all(&content_dir).map_err(|e| e.to_string())?;
