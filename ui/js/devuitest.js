@@ -2,7 +2,7 @@
 // 把每一步的结果写进数据目录的 ui-log.txt，用于在没有人工点击的情况下定位交互 bug。
 // 仅在 NOVEL_MANAGER_UITEST=1 时执行。
 
-import { log } from './api.js';
+import { api, log } from './api.js';
 
 const enabled = window.__MOGE_UITEST__ === true;
 if (enabled) {
@@ -74,8 +74,8 @@ if (enabled) {
     // 1. 标题栏 × 是否对所有弹层有效
     const panels = [
       ['#openSettings', '设置'],
-      ['.status-chip[data-action="outline"]', '大纲'],
-      ['.status-chip[data-action="search"]', '全文搜索'],
+      ['.chip[data-action="outline"]', '大纲'],
+      ['#quickSearch', '全文搜索'],
       ['.chip[data-action="trash"]', '回收站'],
       ['.chip[data-action="help"]', '快捷键'],
       ['.chip[data-action="import"]', '导入'],
@@ -355,6 +355,13 @@ if (enabled) {
 
     const failed = results.filter((r) => !r).length;
     log(`[uitest] ==== 结束：${results.length - failed}/${results.length} 项通过 ====`);
+    if (!failed && window.__MOGE_CLOSETEST__) {
+      const view = document.getElementById('editor');
+      view.value += '\nCLOSE_SAVE_REGRESSION_20260929';
+      view.dispatchEvent(new Event('input', { bubbles: true }));
+      await api.uiLog('[close-test] 未手动保存，立即触发窗口关闭事件');
+      await window.__TAURI__.window.getCurrentWindow().emit('tauri://close-requested');
+    }
   }
 
   const timer = setInterval(() => {

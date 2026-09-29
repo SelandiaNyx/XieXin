@@ -1,0 +1,37 @@
+// Synthetic, ephemeral manuscripts; no disk access or real user data.
+(() => {
+  const now = Date.now();
+  const settings = { theme: 'light', fontFamily: '"Microsoft YaHei", sans-serif', fontSize: 17, lineHeight: 2.1, letterSpacing: .02, editorWidth: 860, autosaveSecs: 20, dailyGoal: 3000, historyDepth: 30, lastBookId: 'sample', oneClickFormatRule: 'cjk-indent' };
+  const book = { id: 'sample', title: '剑气长河', author: '示例作者', genre: '武侠', coverColor: '#147d6c', createdAt: now, updatedAt: now, volumes: [
+    { id: 'v1', title: '第一卷 · 风起北境', expanded: true, chapters: [{ id: 'c1', title: '第一章 雪夜', status: 'revising', charCount: 159, versions: 3 }, { id: 'c2', title: '第二章 旧约', status: 'draft', charCount: 76, versions: 1 }, { id: 'c3', title: '第三章 落子', status: 'draft', charCount: 32, versions: 1 }] },
+    { id: 'v2', title: '第二卷 · 山河故人', expanded: true, chapters: [{ id: 'c4', title: '第四章 长夜', status: 'draft', charCount: 0, versions: 0 }] },
+  ] };
+  const content = { c1: '雪落下来了。\n\n沈孤鸿站在城墙上，看着远处连绵的灯火。风从北面吹来，卷起他衣角的一片霜色。\n\n他已经在这里站了三个时辰。\n\n“你还是来了。”身后传来一个声音。\n\n他没有回头，只是把手按在刀柄上：“我等这一天，等了十年。”\n\n雪花落在刀鞘上，很快融成了水。城门外，一匹瘦马正踏着积雪缓缓走来，马背上的人披着一件青色的旧斗篷。', c2: '城南的酒肆里，说书人正讲着十年前的那场大火。', c3: '棋盘上只剩三枚子。', c4: '' };
+  const cards = [{ id: 'n1', kind: 'character', title: '沈孤鸿', content: '灭门案的唯一幸存者。沉默寡言，带着一把旧刀重回北境。', tags: ['主角', '剑客'], fields: { 身份: '游侠', 目标: '查明十年前的真相' }, color: '#62a98e', pinned: true }, { id: 'n2', kind: 'character', title: '柳青梧', content: '药铺掌柜之女，善用毒，暗中接济流民。她知道的，远比她说出的多。', tags: ['女主', '医毒'], fields: { 立场: '中立偏善' }, color: '#ceac78' }, { id: 'n3', kind: 'plot', title: '雪夜伏击', content: '黑衣人袖口的火纹，与十年前灭门案一致。', tags: ['伏笔'], fields: {}, color: '#ac9dca' }];
+  const statuses = [{ id: 'draft', label: '草稿', color: '#81918b', group: '创作' }, { id: 'revising', label: '修订中', color: '#ae7b38', group: '创作' }, { id: 'final', label: '已定稿', color: '#147d6c', group: '创作' }];
+  const versions = [{ id: 'version1', label: '开篇初稿', kind: 'manual', createdAt: now - 86400000, chars: 50 }];
+  const empty = new URLSearchParams(location.search).has('empty');
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const stats = () => ({ charCount: 267, chapters: 4, volumes: 2, cards: cards.length, words: 0, cjk: 267, versions: 5, todayChars: 159 });
+  window.__TAURI__ = { core: { invoke: async (cmd, args = {}) => {
+    switch (cmd) {
+      case 'ui_ready': return 'preview';
+      case 'ui_log': console.log(args.message); return;
+      case 'workspace_state': return clone({ settings, registry: { books: empty ? [] : [book] }, storageDir: '界面预览 · 临时示例数据', storageBytes: 24576 });
+      case 'chapter_statuses': return clone(statuses);
+      case 'list_fonts': return [];
+      case 'open_book': return clone({ book, cards });
+      case 'read_chapter': return { content: content[args.chapterId], createdAt: now };
+      case 'list_versions': return clone(versions);
+      case 'save_chapter': content[args.chapterId] = args.content; return { updatedAt: Date.now(), charCount: args.content.length, versions: 3 };
+      case 'save_settings': Object.assign(settings, args.settings); return clone(settings);
+      case 'storage_info': return { bytes: 24576 };
+      case 'book_stats': return stats();
+      case 'list_cards': return clone(cards);
+      case 'version_detail': return { meta: versions[0], content: '雪落下来了。', current: content.c1 };
+      case 'list_recent_exports': case 'list_trash': return [];
+      case 'verify_book': return [];
+      default: throw new Error('此操作需要桌面应用：' + cmd);
+    }
+  } } };
+})();

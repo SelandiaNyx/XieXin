@@ -95,6 +95,8 @@ pub fn run() {
                 app::storage_dir_for_app(app.handle())
             };
 
+            let custom_webview_dir = std::env::var("NOVEL_MANAGER_DATA_DIR").ok()
+                .filter(|s| !s.trim().is_empty()).map(|_| root.join(".webview"));
             let store = storage::Store::load(root).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             app.manage(AppState::new(store));
 
@@ -156,6 +158,9 @@ pub fn run() {
                     .min_inner_size(1040.0, 640.0)
                     .center()
                     .zoom_hotkeys_enabled(false);
+                if let Some(dir) = custom_webview_dir {
+                    win = win.data_directory(dir);
+                }
                 if selftest {
                     win = win.initialization_script(
                         "window.__MOGE_SELFTEST__ = true; console.log('[写心] selftest flag injected');",
@@ -163,6 +168,9 @@ pub fn run() {
                 }
                 if uitest {
                     win = win.initialization_script("window.__MOGE_UITEST__ = true;");
+                    if std::env::var("NOVEL_MANAGER_CLOSETEST").is_ok() {
+                        win = win.initialization_script("window.__MOGE_CLOSETEST__ = true;");
+                    }
                 }
                 win.build()?;
             }

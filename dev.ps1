@@ -42,6 +42,10 @@ switch ($Task) {
   'check'   { cargo check --manifest-path $manifest }
   'build'   { cargo build --manifest-path $manifest }
   'test'    {
+    node --test (Join-Path $ws 'tests\editor.test.cjs')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    cargo test --manifest-path $manifest --test core
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     cargo build --manifest-path $manifest
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     # 纯函数断言在应用内执行（--self-check），无需再启动测试可执行文件
