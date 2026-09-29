@@ -5,150 +5,96 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>写心 · 小说写作工作台</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="workspace.css" />
 </head>
 <body>
-  <div id="app" class="app no-anim" data-sidebar="open" data-inspector="open" data-focus="off" data-hasbook="no">
-    <!-- ================= 左侧边栏 ================= -->
-    <aside class="sidebar" id="sidebar">
-      <div class="sidebar-top">
-        <button class="book-switch" id="bookSwitch" title="切换 / 新建书籍">
-          <span class="book-dot" id="bookDot"></span>
-          <span class="book-switch-text">
-            <strong id="bookTitleLabel">未选择书籍</strong>
-            <small id="bookMetaLabel">点击选择或新建作品</small>
-          </span>
-          <span class="chev">▾</span>
-        </button>
-        <button class="icon-btn" id="openSettings" title="设置">⚙</button>
+  <div id="app" class="app no-anim" data-sidebar="open" data-inspector="open" data-focus="off" data-hasbook="no" data-haschapter="no">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z"/><path d="m14 5 5 5M4 16l4 4"/></svg></span><strong>写心</strong><span class="brand-caption">创作工作台</span></div>
+      <div class="topbar-left">
+        <button class="icon-btn" id="toggleSidebar" title="目录 · F9" aria-label="目录 · F9"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
+        <div class="crumb"><span id="crumbVolume">未选择章节</span><span class="crumb-sep">/</span><input id="chapterTitleInput" class="chapter-title-input" placeholder="章节标题" aria-label="章节标题" /></div>
       </div>
+      <div class="topbar-right">
+        <button class="icon-btn" id="quickSearch" title="全文搜索 · Ctrl+F" aria-label="全文搜索 · Ctrl+F"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></button>
+        <span class="toolbar-divider"></span>
+        <button class="icon-btn" id="snapshotBtn" title="创建快照 · Ctrl+Shift+S" aria-label="创建快照 · Ctrl+Shift+S"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="7" width="16" height="14" rx="2"/><path d="M8 3h8M12 11v6M9 14h6"/></svg></button>
+        <button class="icon-btn" id="historyBtn" title="历史版本 · Ctrl+Y" aria-label="历史版本 · Ctrl+Y"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11a9 9 0 1 1 3 8M3 4v7h7M12 7v5l3 2"/></svg></button>
+        <button class="mini export-action" id="exportBtn" title="导出 · Ctrl+E"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 15v6h16v-6"/></svg><span>导出</span></button>
+        <button class="primary save-action" id="saveBtn" title="保存 · Ctrl+S"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h10V3M7 21v-8h10v8"/></svg><span>保存</span><kbd>Ctrl S</kbd></button>
+        <span class="toolbar-divider"></span>
+        <button class="icon-btn" id="toggleInspector" title="素材栏 · F10" aria-label="素材栏 · F10"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+        <button class="icon-btn" id="openSettings" title="外观与偏好设置" aria-label="外观与偏好设置"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6M10 15v6"/></svg></button>
+      </div>
+    </header>
 
+    <aside class="sidebar" id="sidebar" aria-label="作品目录">
+      <div class="sidebar-top">
+        <button class="book-switch" id="bookSwitch" title="切换 / 新建作品">
+          <span class="book-emblem" id="bookDot"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5a2 2 0 0 1 2-2h14v18H6a2 2 0 0 1 0-4h14M8 7h8M8 11h5"/></svg></span>
+          <span class="book-switch-text"><strong id="bookTitleLabel">我的书架</strong><small id="bookMetaLabel">选择或创建作品</small></span>
+          <span class="chev"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></span>
+        </button>
+      </div>
       <div class="sidebar-tools">
-        <div class="tool-row">
-          <button class="mini" id="addVolume" title="新增一卷">＋卷</button>
-          <button class="mini" id="addChapter" title="新增一章">＋章</button>
-          <input class="mini-input" id="tocFilter" type="search" placeholder="搜索章节…" />
-        </div>
+        <label class="search-field"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input class="mini-input" id="tocFilter" type="search" placeholder="筛选章节…" aria-label="筛选章节" /></label>
+        <div class="section-heading"><span>作品目录</span><div class="section-actions"><button class="icon-btn" id="addVolume" title="新建卷" aria-label="新建卷"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5h6l2 2h10v13H3Z"/></svg></button><button class="icon-btn" id="addChapter" title="新建章节 · Ctrl+Alt+N" aria-label="新建章节 · Ctrl+Alt+N"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div></div>
         <div class="toc-stats" id="tocStats">卷 0 · 章 0</div>
       </div>
-
-      <div class="toc" id="toc" tabindex="0"></div>
-
+      <nav class="toc" id="toc" tabindex="0" aria-label="卷与章节"></nav>
+      <div class="daily-goal">
+        <div class="daily-heading"><span><i class="live-dot"></i>今日创作</span><strong id="dailyGoalValue">0 字</strong></div>
+        <div class="daily-track" role="progressbar" aria-label="每日写作目标" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="dailyProgress"><i></i></div>
+        <div class="daily-caption" id="dailyGoalCaption">每天写一点，故事更近一点</div>
+      </div>
       <div class="sidebar-bottom" id="sidebarBottom" data-collapsed="false">
-        <button class="bottom-toggle" id="toggleBottom" title="展开 / 收起功能面板">
-          <span class="bottom-toggle-label">功能面板</span>
-          <span class="bottom-toggle-caret" id="bottomCaret">▾</span>
-        </button>
+        <button class="bottom-toggle" id="toggleBottom" title="展开 / 收起工具箱"><span class="bottom-toggle-label">工具箱</span><span class="bottom-toggle-caret" id="bottomCaret"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></span></button>
         <div class="bottom-body" id="bottomBody">
           <div class="bottom-grid">
-            <button class="chip" data-action="new-book" title="新建书籍">新建书</button>
-            <button class="chip" data-action="new-volume" title="新增卷">新增卷</button>
-            <button class="chip" data-action="new-chapter" title="新增章">新增章</button>
-            <button class="chip" data-action="search" title="全文搜索 Ctrl+F">全文搜索</button>
-            <button class="chip" data-action="replace" title="查找替换 Ctrl+H">查找替换</button>
-            <button class="chip" data-action="import" title="导入 TXT / 备份">导入文本</button>
-            <button class="chip" data-action="outline" title="大纲 / 概要">大纲视图</button>
-            <button class="chip" data-action="trash" title="回收站">回收站</button>
-            <button class="chip" data-action="verify" title="检查数据一致性">数据体检</button>
-            <button class="chip" data-action="focus" title="专注模式 F11">专注模式</button>
-            <button class="chip" data-action="pomodoro" title="番茄钟">番茄钟</button>
-            <button class="chip" data-action="help" title="快捷键与说明">快捷键</button>
+            <button class="chip" data-action="new-book">新建作品</button><button class="chip" data-action="outline">章节大纲</button>
+            <button class="chip" data-action="search" title="Ctrl+F">全文搜索</button><button class="chip" data-action="replace" title="Ctrl+H">查找替换</button>
+            <button class="chip" data-action="import">导入文本</button><button class="chip" data-action="pomodoro">番茄钟</button>
+            <button class="chip" data-action="trash">回收站</button><button class="chip" data-action="verify">数据体检</button>
+            <button class="chip" data-action="focus" title="F11">专注模式</button><button class="chip" data-action="help">快捷键</button>
           </div>
-          <div class="storage-line">
-            <span id="storageLabel">存储：-</span>
-            <button class="link" id="openStorageDir" title="在资源管理器中打开">打开目录</button>
-          </div>
+          <div class="storage-line"><span id="storageLabel">存储：-</span><button class="link" id="openStorageDir">打开目录</button></div>
         </div>
       </div>
     </aside>
 
-    <!-- ================= 中间编辑区 ================= -->
     <main class="main">
-      <header class="topbar">
-        <div class="topbar-left">
-          <button class="icon-btn ghost" id="toggleSidebar" title="收起 / 展开左栏">☰</button>
-          <div class="crumb">
-            <span id="crumbVolume">-</span>
-            <span class="crumb-sep">/</span>
-            <input id="chapterTitleInput" class="chapter-title-input" placeholder="章节标题" />
-          </div>
-          <select id="statusSelect" class="status-select" title="章节状态（创作阶段 → 发布阶段）"></select>
-        </div>
-        <div class="topbar-right">
-          <div class="wordcount" id="wordCountBox" title="点击查看详细统计">
-            <span class="wc-main"><b id="wcTotal">0</b> 字</span>
-            <span class="wc-sub">本章 <b id="wcChapter">0</b> · 今日 <b id="wcToday">0</b></span>
-          </div>
-          <button class="primary" id="oneClickFormat" title="一键排版（Ctrl+Shift+F）">一键排版</button>
-          <button class="icon-btn" id="snapshotBtn" title="保存并打快照 (Ctrl+Shift+S)">⛁</button>
-          <button class="icon-btn" id="historyBtn" title="历史版本：查看版本列表并逐行对比、回滚 (Ctrl+Y)">⇄</button>
-          <button class="icon-btn" id="exportBtn" title="导出 (Ctrl+E)">⤓</button>
-          <button class="icon-btn ghost" id="toggleInspector" title="收起 / 展开右栏">▤</button>
-        </div>
-      </header>
-
+      <div class="document-toolbar">
+        <div class="document-context"><span class="context-dot"></span><span>正文编辑</span><select id="statusSelect" class="status-select" aria-label="章节状态"></select></div>
+        <div class="document-actions"><button class="text-action" id="oneClickFormat" title="一键排版 · Ctrl+Shift+F"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16M8 10h12M8 15h12M4 20h16M3 10l3 2.5L3 15"/></svg><span>排版</span></button><span class="toolbar-divider"></span><button class="text-action" id="focusBtn" title="专注模式 · F11" aria-pressed="false"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><span>专注</span></button></div>
+      </div>
       <div class="editor-wrap" id="editorWrap">
-        <div class="editor-page" id="editorPage">
-          <input id="chapterTitleBig" class="chapter-title-big" placeholder="（无标题）" />
-          <textarea id="editor" class="editor" spellcheck="false" placeholder="在这里开始写作……"></textarea>
-          <div class="editor-empty" id="editorEmpty">
-            <h3>还没有作品</h3>
-            <p>点击左上角选择作品，或按 <kbd>Ctrl</kbd>+<kbd>N</kbd> 新建一本书。</p>
-          </div>
-        </div>
+        <div class="paper-caption"><span>让文字，慢慢生长。</span><button class="wordcount" id="wordCountBox" title="查看写作统计"><span class="wc-main">全书 <b id="wcTotal">0</b> 字</span><span class="wc-sub">本章 <b id="wcChapter">0</b> · 今日 <b id="wcToday">0</b></span></button></div>
+        <article class="editor-page" id="editorPage">
+          <div class="manuscript-label">正文手稿 <span></span> 稿纸</div>
+          <input id="chapterTitleBig" class="chapter-title-big" placeholder="为这一章起个名字" aria-label="正文标题" />
+          <textarea id="editor" class="editor" spellcheck="false" placeholder="故事，就从这一行开始……" aria-label="章节正文"></textarea>
+          <div class="editor-empty" id="editorEmpty"><span class="empty-mark"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z"/><path d="m14 5 5 5M4 16l4 4"/></svg></span><span class="empty-eyebrow">下一章，等你落笔</span><h3 id="emptyTitle">每一个故事，都从这里开始</h3><p>整理灵感，构建世界，安心写下每一章。</p><div class="empty-actions"><button class="primary" id="emptyStart">创建作品</button><button class="mini" id="emptyImport">导入已有稿件</button></div><small>本地保存 · 随时导出 · 历史版本</small></div>
+        </article>
+        <div class="writing-hint"><span>Ctrl S 保存</span><i>·</i><span>F11 进入专注</span><i>·</i><span>Ctrl Shift S 留存快照</span></div>
       </div>
-
-      <!-- 查找替换条 -->
       <div class="findbar" id="findBar" hidden>
-        <input id="findInput" placeholder="查找…" />
-        <input id="replaceInput" placeholder="替换为…" />
+        <input id="findInput" placeholder="查找…" aria-label="查找内容" /><input id="replaceInput" placeholder="替换为…" aria-label="替换内容" />
         <label class="inline"><input type="checkbox" id="caseSensitive" /> 区分大小写</label>
-        <button class="mini" id="findNext">下一个</button>
-        <button class="mini" id="replaceOne">替换</button>
-        <button class="mini" id="replaceAllBtn">全部替换</button>
-        <button class="icon-btn ghost" id="closeFind">✕</button>
+        <button class="mini" id="findNext">下一个</button><button class="mini" id="replaceOne">替换</button><button class="mini" id="replaceAllBtn">全部替换</button><button class="icon-btn" id="closeFind" title="关闭查找" aria-label="关闭查找"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button>
       </div>
-
-      <!-- 底部状态栏 -->
       <footer class="statusbar">
-        <div class="status-left">
-          <span id="saveState" class="save-state">就绪</span>
-          <span class="dot-sep">·</span>
-          <span id="versionInfo">版本 0</span>
-          <span class="dot-sep">·</span>
-          <span id="cursorInfo">行 1 · 列 1</span>
-          <span class="dot-sep">·</span>
-          <span id="selectionInfo">选中 0</span>
-        </div>
-        <div class="status-right">
-          <button class="status-chip danger" id="undoFormatBtn" hidden title="撤销上一次一键排版">↺ 撤销排版</button>
-          <button class="status-chip" data-action="outline">大纲</button>
-          <button class="status-chip" data-action="search">搜索</button>
-          <button class="status-chip" data-action="pomodoro" id="pomodoroChip">番茄钟 25:00</button>
-          <button class="status-chip" data-action="session">本次 0 字</button>
-          <span class="clock" id="clock">--:--:--</span>
-        </div>
+        <div class="status-left"><button id="saveState" class="save-state" title="点击保存 · Ctrl+S" aria-live="polite">就绪</button><span class="dot-sep">·</span><span id="versionInfo">版本 0</span><span class="dot-sep">·</span><span id="cursorInfo">行 1 · 列 1</span><span id="selectionInfo">选中 0</span></div>
+        <div class="status-right"><button class="status-chip danger" id="undoFormatBtn" hidden>撤销排版</button><button class="status-chip" data-action="pomodoro" id="pomodoroChip">番茄钟 25:00</button><button class="status-chip session-chip" data-action="session">本次 0 字</button><span class="clock" id="clock">--:--:--</span></div>
       </footer>
     </main>
 
-    <!-- ================= 右侧卡片栏 ================= -->
-    <aside class="inspector" id="inspector">
-      <div class="inspector-head">
-        <div class="tabs" id="cardTabs">
-          <button class="tab active" data-kind="character">人物</button>
-          <button class="tab" data-kind="plot">剧情</button>
-          <button class="tab" data-kind="inspiration">灵光</button>
-          <button class="tab" data-kind="world">设定</button>
-        </div>
-        <button class="icon-btn" id="addCard" title="新建卡片">＋</button>
-      </div>
-      <div class="inspector-search">
-        <input id="cardSearch" type="search" placeholder="搜索卡片标题 / 标签 / 内容…" />
-      </div>
-      <div class="cards" id="cards"></div>
-      <div class="inspector-foot">
-        <button class="mini" id="insertCardContent" title="把选中卡片的内容插入正文">插入正文</button>
-        <button class="mini" id="cardsToOutline" title="把卡片汇总成剧情提纲">生成提纲</button>
-      </div>
+    <aside class="inspector" id="inspector" aria-label="创作素材">
+      <div class="inspector-heading"><div><span class="eyebrow">人物 · 剧情 · 灵感</span><h2>灵感与素材 <span id="cardCount">0</span></h2></div><button class="icon-btn" id="addCard" title="新建素材卡片" aria-label="新建素材卡片"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
+      <div class="inspector-head"><div class="tabs" id="cardTabs" role="tablist" aria-label="素材类型"><button class="tab active" role="tab" aria-selected="true" data-kind="character">人物</button><button class="tab" role="tab" aria-selected="false" data-kind="plot">剧情</button><button class="tab" role="tab" aria-selected="false" data-kind="inspiration">灵光</button><button class="tab" role="tab" aria-selected="false" data-kind="world">设定</button></div></div>
+      <div class="inspector-search"><label class="search-field"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="cardSearch" type="search" placeholder="搜索素材、标签…" aria-label="搜索素材" /></label></div>
+      <div class="cards" id="cards" role="tabpanel"></div>
+      <div class="inspector-tip">选中卡片可插入正文 · 双击编辑</div>
+      <div class="inspector-foot"><button class="mini" id="insertCardContent" title="Ctrl+K">插入正文 <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg></button><button class="mini" id="cardsToOutline">生成提纲</button></div>
     </aside>
   </div>
 

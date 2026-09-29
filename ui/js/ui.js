@@ -53,16 +53,6 @@ export function animateNumber(el, to, { duration = 380, suffix = '' } = {}) {
   animating.set(el, requestAnimationFrame(step));
 }
 
-/** 用 View Transitions 包住一次 DOM 更新，得到系统级的淡入淡出切页效果。 */
-export function withViewTransition(update) {
-  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reduce || typeof document.startViewTransition !== 'function') {
-    const r = update();
-    return r;
-  }
-  return document.startViewTransition(update);
-}
-
 export function escapeHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
@@ -73,9 +63,12 @@ export function escapeHtml(s) {
 }
 
 let onCloseHook = null;
+let modalGeneration = 0;
 
 export function openModal({ title, body, footer = '', width = '', onMount, onClose }) {
+  modalGeneration += 1;
   const overlay = document.getElementById('overlay');
+  overlay.classList.remove('closing');
   const modal = document.getElementById('modal');
   document.getElementById('modalTitle').textContent = title;
   const bodyEl = document.getElementById('modalBody');
@@ -104,9 +97,11 @@ export function closeModal() {
   const overlay = document.getElementById('overlay');
   if (overlay.hidden) return;
   const hook = onCloseHook;
+  const generation = modalGeneration;
   onCloseHook = null;
   // 先播放退场动画，动画结束再真正隐藏（更接近 Windows 弹窗的收拢感）
   const finish = () => {
+    if (generation !== modalGeneration) return;
     overlay.classList.remove('closing');
     overlay.hidden = true;
     overlay.style.display = 'none';
@@ -136,6 +131,7 @@ export function modalOpen() {
 
 export function confirmDialog(title, message, { okText = '确定', danger = false } = {}) {
   return new Promise((resolve) => {
+    let accepted = false;
     openModal({
       title,
       width: 'narrow',
@@ -145,9 +141,9 @@ export function confirmDialog(title, message, { okText = '确定', danger = fals
                  ${danger ? 'style="background:var(--danger);color:#fff"' : ''}>${escapeHtml(okText)}</button>`,
       onMount(bodyEl, footEl) {
         footEl.querySelector('[data-role="cancel"]').onclick = () => { closeModal(); resolve(false); };
-        footEl.querySelector('[data-role="ok"]').onclick = () => { closeModal(); resolve(true); };
+        footEl.querySelector('[data-role="ok"]').onclick = () => { accepted = true; closeModal(); resolve(true); };
       },
-      onClose() { resolve(false); },
+      onClose() { resolve(accepted); },
     });
   });
 }
