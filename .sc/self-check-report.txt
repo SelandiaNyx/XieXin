@@ -1,0 +1,2 @@
+[self-check] 纯函数检查 22 项全部通过
+[status] OK

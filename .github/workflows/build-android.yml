@@ -38,6 +38,17 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125'
 
+      - name: 定位 NDK 并写入环境变量
+        run: |
+          # 不能引用 env.ANDROID_NDK_LATEST_HOME：这个 runner 上它是空的，
+          # tauri 会报 "Android NDK invalid"。改为按实际安装位置发现。
+          ndk_root="${ANDROID_HOME}/ndk"
+          ls -1 "$ndk_root"
+          ndk_dir=$(find "$ndk_root" -maxdepth 1 -mindepth 1 -type d | sort | tail -n1)
+          echo "NDK_HOME=$ndk_dir" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ndk_dir" >> "$GITHUB_ENV"
+          test -f "$ndk_dir/source.properties" && echo "NDK 就绪：$ndk_dir"
+
       - name: 安装 Rust 与 Android target
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -57,16 +68,12 @@ jobs:
         run: cargo install tauri-cli --version '^2' --locked
 
       - name: 生成 Android 工程
-        env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
         run: |
           # tauri android init 只需要跑一次，但 CI 里每次都从干净目录开始，
           # 所以这里生成后立刻构建；gen/ 不进仓库。
           cargo tauri android init --ci
 
       - name: 构建 APK（按 ABI 拆分）
-        env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
         run: |
           cargo tauri android build --apk --split-per-abi --ci
 
