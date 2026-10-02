@@ -110,6 +110,23 @@ jobs:
           find src-tauri/gen/android -name '*.apk' -exec cp {} dist/ \;
           ls -lh dist/
 
+      - name: 用临时密钥签名 APK
+        run: |
+          # 未签名的 APK 在 Android 上根本装不进去（INSTALL_PARSE_FAILED_NO_CERTIFICATES）。
+          # 这里生成一个固定的调试密钥并签名：Android 会提示"来源未知"，但可以正常安装。
+          # 正式上架需要换成你自己的 keystore（把 base64 存进 Secrets 再解出来即可）。
+          keytool -genkeypair -v \
+            -keystore ci-debug.keystore -storepass android -keypass android \
+            -alias cikey -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=XieXin CI, OU=Build, O=HeartWrite, L=NA, ST=NA, C=CN"
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort | tail -n1)
+          echo "使用 $signer"
+          for apk in dist/*.apk; do
+            "$signer" sign --ks ci-debug.keystore --ks-pass pass:android \
+              --key-pass pass:android --ks-key-alias cikey "$apk"
+            "$signer" verify --print-certs "$apk" | head -n 3
+          done
+
       - name: 上传 APK
         uses: actions/upload-artifact@v4
         with:
