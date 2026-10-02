@@ -1,6 +1,6 @@
 [package]
 name = "novel-manager"
-version = "0.1.0"
+version = "0.1.1"
 description = "写心 · 本地小说写作工作台"
 authors = ["Novel Manager"]
 edition = "2021"

@@ -4,16 +4,14 @@ name: 构建 Arch Linux 便携版
 # 所以 Linux 包在 Arch 容器里构建，产出与 Windows 便携版同构的"解压即用"压缩包。
 on:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: '要附到哪个 Release（留空则只作为构建产物）'
-        required: false
   push:
     tags:
-      # 从 v0.2.0 起才自动跑：v0.1.1 已经发布过 Windows 包，
-      # 自动挂载同名体系的附件会造成混乱，需要时用 workflow_dispatch 手动触发。
+      - 'v0.1.*'
       - 'v0.2.*'
       - 'v1.*'
+
+permissions:
+  contents: write   # 打 tag 时需要把产物挂到 Release
 
 jobs:
   arch-portable:
@@ -24,10 +22,14 @@ jobs:
     steps:
       - name: 安装构建依赖
         run: |
+          # 注意 Arch 的包名与 Debian 不同：
+          #   xdo            ← Debian 里叫 libxdo，仅 Rust 构建期需要
+          #   rust           ← 直接指定，否则 "cargo" 会在 rust/rustup 之间交互式提问
+          #   webkit2gtk-4.1 ← Tauri 2 的 WebView 后端（4.0 是 Tauri 1 用的，别装错）
           pacman -Syu --noconfirm --needed \
-            base-devel git rust cargo pkgconf \
+            base-devel git rust pkgconf \
             webkit2gtk-4.1 gtk3 librsvg libsoup3 patchelf \
-            alsa-lib libxdo
+            alsa-lib xdo
 
       - uses: actions/checkout@v4
 
@@ -55,7 +57,7 @@ jobs:
           cp LICENSE "$out/LICENSE"
           cp src-tauri/icons/512x512.png "$out/HeartWrite.png"
 
-          # 桌面入口：写成相对 Exec，这样解压到任何位置都能用
+          # 桌面入口：Exec 用相对路径，解压到任何位置都能直接跑
           cat > "$out/HeartWrite.desktop" <<'EOF'
           [Desktop Entry]
           Type=Application
@@ -76,7 +78,7 @@ jobs:
       - name: 冒烟测试（无头，不创建窗口）
         run: |
           # --smoke-test 走无头分支、不建窗口，所以不需要 X 显示。
-          # 这一步确认打出来的二进制真的能跑：建书→写作→版本→排版→导出→导入→回收站→重载。
+          # 这一步确认打出来的二进制真能跑：建书→写作→版本→排版→导出→导入→回收站→重载。
           ./release/XieXin-linux-*/HeartWrite --smoke-test --data-dir /tmp/smoke
           cat /tmp/smoke/smoke-report.txt
 
@@ -86,3 +88,19 @@ jobs:
           name: xiexin-arch-linux
           path: release/XieXin-linux-*.tar.gz
           if-no-files-found: error
+
+      - name: 挂到 Release（仅 tag 推送时）
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Arch 容器里没有 gh，直接用 GitHub API 上传
+          tag="${GITHUB_REF_NAME}"
+          version=$(grep -m1 '^version' src-tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          asset="release/XieXin-linux-${version}.tar.gz"
+          echo "上传 $asset 到 Release $tag"
+          curl -sSfL -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@${asset}" \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}/assets?name=$(basename "$asset")"
