@@ -1,0 +1,88 @@
+name: 构建 Arch Linux 便携版
+
+# 为什么需要 CI：Windows 上无法产出 Linux 二进制（链接需要 ELF 工具链与 glibc），
+# 所以 Linux 包在 Arch 容器里构建，产出与 Windows 便携版同构的"解压即用"压缩包。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要附到哪个 Release（留空则只作为构建产物）'
+        required: false
+  push:
+    tags:
+      # 从 v0.2.0 起才自动跑：v0.1.1 已经发布过 Windows 包，
+      # 自动挂载同名体系的附件会造成混乱，需要时用 workflow_dispatch 手动触发。
+      - 'v0.2.*'
+      - 'v1.*'
+
+jobs:
+  arch-portable:
+    name: Arch Linux 便携包
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: 安装构建依赖
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git rust cargo pkgconf \
+            webkit2gtk-4.1 gtk3 librsvg libsoup3 patchelf \
+            alsa-lib libxdo
+
+      - uses: actions/checkout@v4
+
+      - name: 缓存 cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: arch-cargo-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
+          restore-keys: arch-cargo-
+
+      - name: 构建 release
+        working-directory: src-tauri
+        run: cargo build --release --locked
+
+      - name: 打包便携目录
+        run: |
+          set -eux
+          version=$(grep -m1 '^version' src-tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          out="release/XieXin-linux-${version}"
+          mkdir -p "$out"
+          cp src-tauri/target/release/novel-manager "$out/HeartWrite"
+          cp LICENSE "$out/LICENSE"
+          cp src-tauri/icons/512x512.png "$out/HeartWrite.png"
+
+          # 桌面入口：写成相对 Exec，这样解压到任何位置都能用
+          cat > "$out/HeartWrite.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=写心
+          Name[en]=HeartWrite
+          Comment=本地小说写作工作台
+          Exec=./HeartWrite
+          Icon=HeartWrite
+          Terminal=false
+          Categories=Office;WordProcessor;
+          MimeType=text/plain;
+          EOF
+
+          chmod +x "$out/HeartWrite"
+          tar -czf "release/XieXin-linux-${version}.tar.gz" -C release "XieXin-linux-${version}"
+          ls -l release/
+
+      - name: 冒烟测试（无头，不创建窗口）
+        run: |
+          # --smoke-test 走无头分支、不建窗口，所以不需要 X 显示。
+          # 这一步确认打出来的二进制真的能跑：建书→写作→版本→排版→导出→导入→回收站→重载。
+          ./release/XieXin-linux-*/HeartWrite --smoke-test --data-dir /tmp/smoke
+          cat /tmp/smoke/smoke-report.txt
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiexin-arch-linux
+          path: release/XieXin-linux-*.tar.gz
+          if-no-files-found: error

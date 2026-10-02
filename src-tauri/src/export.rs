@@ -614,28 +614,19 @@ pub fn run_export(store: &Store, book_id: &str, opt: &ExportOptions) -> Result<E
 }
 
 /// 弹出系统"另存为"对话框，返回用户选择的路径。
+/// Android 上没有原生选择器时返回 None，调用方会写入内置导出目录。
 pub fn pick_save_path(default_name: &str, ext: &str) -> Option<String> {
-    let dialog = rfd::FileDialog::new()
-        .set_title("导出小说")
-        .set_file_name(default_name)
-        .add_filter(ext.to_uppercase(), &[ext])
-        .add_filter("所有文件", &["*"]);
-    dialog.save_file().map(|p| p.to_string_lossy().to_string())
+    crate::dialog::save_path(default_name, &crate::dialog::FileFilter::new(&ext.to_uppercase(), &[ext]))
 }
 
 pub fn pick_directory(title: &str) -> Option<String> {
-    rfd::FileDialog::new()
-        .set_title(title)
-        .pick_folder()
-        .map(|p| p.to_string_lossy().to_string())
+    crate::dialog::directory(title)
 }
 
 pub fn pick_open_file(filters: &[(&str, &[&str])]) -> Option<String> {
-    let mut d = rfd::FileDialog::new().set_title("打开文件");
-    for (name, exts) in filters {
-        d = d.add_filter(*name, exts);
-    }
-    d.pick_file().map(|p| p.to_string_lossy().to_string())
+    let owned: Vec<crate::dialog::FileFilter> =
+        filters.iter().map(|(name, exts)| crate::dialog::FileFilter::new(name, exts)).collect();
+    crate::dialog::open_file(&owned)
 }
 
 pub fn suggest_filename(store: &Store, book_id: &str, opt: &ExportOptions) -> Result<String, String> {

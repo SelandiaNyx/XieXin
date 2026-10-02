@@ -8,7 +8,12 @@ rust-version = "1.77"
 
 [lib]
 name = "novel_manager_lib"
-# 仅桌面端：不需要 cdylib/staticlib，避免 GNU ld 生成导出序号时溢出
+# 仅 rlib：GNU ld 为 cdylib 生成导出序号时会溢出（"export ordinal too large"），
+# 所以 Windows/Linux 桌面端不产出 cdylib。
+# Android 必须产出 cdylib，否则 build.rs 不会生成插件入口
+# （NovelManagerLib_init_plugin_app 会被静默跳过，APK 一启动就崩且无任何报错）。
+# 这一条只能在 CI 里用 `cargo rustc --crate-type cdylib` 覆盖，因为 Cargo 不支持
+# 按 target 条件设置 crate-type。
 crate-type = ["rlib"]
 # The desktop library links Win32 UI imports that require the app manifest.
 # Run pure/core tests via tests/core.rs, without the desktop event loop.
@@ -30,9 +35,12 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 chrono = { version = "0.4.45", features = ["serde"] }
 uuid = { version = "1.26.1", features = ["v4", "serde"] }
-rfd = "0.17.2"
 walkdir = "2.5.0"
 encoding_rs = "0.8.41"
+
+# 文件对话框只在桌面平台需要；Android 上 rfd 没有实现，由 src/dialog.rs 提供降级实现。
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rfd = "0.17.2"
 
 [profile.release]
 codegen-units = 1

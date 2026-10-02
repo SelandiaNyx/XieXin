@@ -1,6 +1,7 @@
 //! 写心 · 本地小说写作工作台 —— 应用入口与 Tauri 命令注册。
 
 pub mod app;
+pub mod dialog;
 pub mod export;
 pub mod smoke;
 pub mod storage;
@@ -159,8 +160,12 @@ pub fn run() {
                     .title("写心 · 小说写作工作台")
                     .inner_size(1440.0, 900.0)
                     .min_inner_size(1040.0, 640.0)
-                    .center()
                     .zoom_hotkeys_enabled(false);
+                // 桌面端才居中：移动端没有 center()，而且窗口本来就铺满屏幕。
+                #[cfg(desktop)]
+                {
+                    win = win.center();
+                }
                 if let Some(dir) = custom_webview_dir {
                     win = win.data_directory(dir);
                 }

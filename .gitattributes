@@ -1,0 +1,28 @@
+# 跨平台构建的换行约定。
+# CI 工作流与 shell 脚本必须是 LF：CRLF 会让 GitHub Actions 的 bash 直接报错
+# （`/usr/bin/env: 'bash\r': No such file or directory`），而且这种错误很难一眼看出。
+* text=auto
+
+*.sh        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.rs        text eol=lf
+*.toml      text eol=lf
+*.json      text eol=lf
+*.js        text eol=lf
+*.css       text eol=lf
+*.html      text eol=lf
+*.cjs       text eol=lf
+*.md        text eol=lf
+
+# Windows 专用脚本保留 CRLF，PowerShell 与 cmd 都能正常处理
+*.ps1       text eol=crlf
+
+# 二进制资源不要做任何换行转换（否则图标/EPUB 会被改坏）
+*.png       binary
+*.ico       binary
+*.icns      binary
+*.exe       binary
+*.dll       binary
+*.zip       binary
+*.epub      binary
