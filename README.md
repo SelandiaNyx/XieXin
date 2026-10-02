@@ -143,6 +143,32 @@ pwsh -File packaging/package.ps1 # 构建并打包 release/HeartWrite-Windows.zi
 
 应用内「设置 → 运行内置自检」也能随时跑一遍同样的全流程检查。
 
+### 三个平台怎么构建
+
+Windows 可以在本机构建；**Linux 与 Android 必须用 CI**，理由不是偷懒而是硬约束：
+
+| 目标 | 在哪里构建 | 为什么不能在本机 |
+| --- | --- | --- |
+| Windows 便携版 | 本机（`packaging/package.ps1`） | — |
+| Arch Linux 便携版 | `.github/workflows/build-linux.yml`，跑在 `archlinux:base-devel` 容器里 | Windows 无法产出 ELF 可执行文件，链接需要 ELF 工具链与 glibc；本机也没有 WSL 或容器运行时 |
+| Android APK | `.github/workflows/build-android.yml`，跑在 Ubuntu | 需要 Android SDK + NDK + JDK；本机未安装 |
+
+两个工作流都支持手动触发（Actions 页面 → Run workflow），推送 `v0.1.*` / `v0.2.*` / `v1.*` 形式的 tag 时会自动构建**并把产物挂到对应 Release**。
+
+Arch 用户有两条路：
+
+```bash
+# 路线一：装系统包（AUR，使用 CI 预编译产物，不需要 Rust 与 -dev 依赖）
+cd packaging/arch && makepkg -si
+
+# 路线二：直接用便携版压缩包（解压即用，与 Windows 便携版同构）
+tar -xzf XieXin-linux-0.1.1.tar.gz && ./XieXin-linux-0.1.1/HeartWrite
+```
+
+**Android 上的行为差异**（不是 bug，是平台限制）：`rfd` 没有 Android 后端，所以文件选择器不可用。
+导出会直接写到应用私有导出目录（与桌面端"不指定路径"时一致），导入 TXT 暂不支持。
+其余功能——写作、版本历史、字数统计、一键排版、EPUB/TXT/MD/HTML/JSON 导出、卡片墙——都可用。
+
 ### 界面验收与截图
 
 ```powershell
