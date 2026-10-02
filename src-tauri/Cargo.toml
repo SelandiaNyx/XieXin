@@ -10,10 +10,12 @@ rust-version = "1.77"
 name = "novel_manager_lib"
 # 仅 rlib：GNU ld 为 cdylib 生成导出序号时会溢出（"export ordinal too large"），
 # 所以 Windows/Linux 桌面端不产出 cdylib。
-# Android 必须产出 cdylib，否则 build.rs 不会生成插件入口
-# （NovelManagerLib_init_plugin_app 会被静默跳过，APK 一启动就崩且无任何报错）。
-# 这一条只能在 CI 里用 `cargo rustc --crate-type cdylib` 覆盖，因为 Cargo 不支持
-# 按 target 条件设置 crate-type。
+# Android 构建需要 cdylib，但 Cargo 不支持按 target 条件设置 crate-type
+# （[target.'cfg(..)'.lib] 是无效 key，只会得到 "unused manifest key" 警告）。
+# CI 的解法见 .github/workflows/build-android.yml：复制一份 manifest 并在末尾追加
+# [lib] crate-type，只让那次构建指向副本，仓库文件保持不动。
+# 缺 cdylib 时的报错是：
+#   Library artifact not found at .../libnovel_manager_lib.so
 crate-type = ["rlib"]
 # The desktop library links Win32 UI imports that require the app manifest.
 # Run pure/core tests via tests/core.rs, without the desktop event loop.

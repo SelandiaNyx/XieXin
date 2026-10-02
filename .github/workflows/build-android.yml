@@ -73,9 +73,33 @@ jobs:
           # 所以这里生成后立刻构建；gen/ 不进仓库。
           cargo tauri android init --ci
 
+      - name: 为 Android 注入 cdylib（先备份）
+        run: |
+          # Cargo 不支持按 target 条件设置 crate-type（[target.'cfg(..)'.lib] 是无效
+          # manifest key，只会得到 "unused manifest key" 警告），而仓库里的 [lib] 必须是
+          # 纯 rlib —— 否则 Windows 的 GNU ld 会在生成导出序号时溢出
+          # （"export ordinal too large"）。
+          #
+          # 所以这里备份 manifest、追加 Android 需要的 crate-type，构建结束后无论成败都还原。
+          # 缺 cdylib 时的报错是：
+          #   Library artifact not found at .../libnovel_manager_lib.so
+          cp src-tauri/Cargo.toml src-tauri/Cargo.toml.android-backup
+          printf '\n# —— 本次 Android 构建临时追加，构建后还原（见 build-android.yml）——\n[lib]\ncrate-type = ["cdylib", "rlib"]\n' \
+            >> src-tauri/Cargo.toml
+          tail -n 4 src-tauri/Cargo.toml
+
       - name: 构建 APK（按 ABI 拆分）
         run: |
           cargo tauri android build --apk --split-per-abi --ci
+
+      - name: 还原 manifest
+        if: always()
+        run: |
+          if [ -f src-tauri/Cargo.toml.android-backup ]; then
+            mv -f src-tauri/Cargo.toml.android-backup src-tauri/Cargo.toml
+            echo "manifest 已还原"
+            git diff --stat -- src-tauri/Cargo.toml
+          fi
 
       - name: 收集 APK
         run: |
