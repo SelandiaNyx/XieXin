@@ -80,13 +80,14 @@ jobs:
           # 纯 rlib —— 否则 Windows 的 GNU ld 会在生成导出序号时溢出
           # （"export ordinal too large"）。
           #
-          # 所以这里备份 manifest、追加 Android 需要的 crate-type，构建结束后无论成败都还原。
+          # 这里备份 manifest 并就地改写那一行，构建结束后无论如何都还原。
+          # 注意不能用"追加第二个 [lib] 段"的写法：cargo 容忍重复段，但 tauri-cli 的
+          # TOML 解析器会报 "duplicate key"。
           # 缺 cdylib 时的报错是：
           #   Library artifact not found at .../libnovel_manager_lib.so
           cp src-tauri/Cargo.toml src-tauri/Cargo.toml.android-backup
-          printf '\n# —— 本次 Android 构建临时追加，构建后还原（见 build-android.yml）——\n[lib]\ncrate-type = ["cdylib", "rlib"]\n' \
-            >> src-tauri/Cargo.toml
-          tail -n 4 src-tauri/Cargo.toml
+          sed -i 's|^crate-type = \["rlib"\]$|crate-type = ["cdylib", "rlib"]|' src-tauri/Cargo.toml
+          grep -n 'crate-type' src-tauri/Cargo.toml
 
       - name: 构建 APK（按 ABI 拆分）
         run: |
@@ -95,11 +96,13 @@ jobs:
       - name: 还原 manifest
         if: always()
         run: |
+          # 无论构建成功失败都还原，避免 CI 里留下被改过的 manifest（下一轮构建会基于它）。
           if [ -f src-tauri/Cargo.toml.android-backup ]; then
             mv -f src-tauri/Cargo.toml.android-backup src-tauri/Cargo.toml
-            echo "manifest 已还原"
-            git diff --stat -- src-tauri/Cargo.toml
           fi
+          # 兜底：万一上面的备份也没了，直接从 git 取回原始版本
+          git checkout -- src-tauri/Cargo.toml
+          echo "还原后：" && grep -n 'crate-type' src-tauri/Cargo.toml
 
       - name: 收集 APK
         run: |
