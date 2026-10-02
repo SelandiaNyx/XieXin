@@ -14,6 +14,9 @@ src-tauri/target/
 .vscode/
 .idea/
 .self-check-data/
+.sc/
+.sm/
+.relcheck/
 .smoke-data/
 .probe/
 release/
