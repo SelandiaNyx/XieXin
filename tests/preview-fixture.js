@@ -28,10 +28,43 @@
       case 'storage_info': return { bytes: 24576 };
       case 'book_stats': return stats();
       case 'list_cards': return clone(cards);
+      case 'move_chapter_to': {
+        // 与 storage.rs 的语义保持一致：先从原卷摘掉，再按 position 插进目标卷
+        let taken = null;
+        for (const vol of book.volumes) {
+          const i = vol.chapters.findIndex(c => c.id === args.chapterId);
+          if (i > -1) { taken = vol.chapters.splice(i, 1)[0]; break; }
+        }
+        if (!taken) throw new Error('找不到该章节');
+        const target = book.volumes.find(v => v.id === args.targetVolumeId);
+        if (!target) throw new Error('找不到目标卷');
+        target.chapters.splice(Math.min(args.position, target.chapters.length), 0, taken);
+        return clone(book);
+      }
       case 'version_detail': return { meta: versions[0], content: '雪落下来了。', current: content.c1 };
       case 'list_recent_exports': case 'list_trash': return [];
       case 'verify_book': return [];
+      // 返回键插件：真机上这里会去装 Android 侧的返回回调
+      case 'plugin:mobile-onbackpressed-listener|register_back_event': return null;
       default: throw new Error('此操作需要桌面应用：' + cmd);
     }
-  } } };
+  },
+  // 供界面回归用：把注册进来的监听器留在一个数组里，测试可以手动"按下返回键"。
+  // 真实实现见 @tauri-apps/api 的 addPluginListener（浏览器预览里没有它）。
+  addPluginListener: async (plugin, event, handler) => {
+    window.__previewPluginListeners.push({ plugin, event, handler });
+    return { unregister: async () => {} };
+  },
+  },
+  // 关窗口在真机上由 Rust 侧处理；预览里只记录一次调用，方便断言"最后一档确实关了窗口"。
+  window: {
+    getCurrentWindow: () => ({
+      close: async () => { window.__previewWindowClosed = true; },
+      destroy: async () => { window.__previewWindowClosed = true; },
+      onCloseRequested: async () => {},
+    }),
+  },
+};
+window.__previewPluginListeners = [];
+window.__previewWindowClosed = false;
 })();
