@@ -94,13 +94,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -eux
           # Arch 容器里没有 gh，直接用 GitHub API 上传
           tag="${GITHUB_REF_NAME}"
           version=$(grep -m1 '^version' src-tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
           asset="release/XieXin-linux-${version}.tar.gz"
-          echo "上传 $asset 到 Release $tag"
-          curl -sSfL -X POST \
+
+          # 上传接口只认数字 release id：写成 /releases/tags/<tag>/assets 会得到
+          # 400 "Multipart form data required"。这条分支以前只在 workflow_dispatch 下
+          # 跑过（那一步被 if 跳过），第一次打 tag 才暴露出来。
+          release_id=$(curl -sSfL -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" \
+            | tr ',' '\n' | sed -n 's/.*"id": *\([0-9]\{1,\}\).*/\1/p' | head -n1)
+          test -n "$release_id"
+
+          # 不加 -f：失败时把 GitHub 的说明打出来（原来只留一个 exit 22）
+          echo "上传 $asset 到 Release $tag（id=$release_id）"
+          code=$(curl -sS -o /tmp/upload.json -w '%{http_code}' -X POST \
             -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Content-Type: application/octet-stream" \
+            -H "Content-Type: application/octet-stream" -H "Expect:" \
             --data-binary "@${asset}" \
-            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}/assets?name=$(basename "$asset")"
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?name=$(basename "$asset")")
+          cat /tmp/upload.json; echo
+          test "$code" = "201" || { echo "上传失败：HTTP $code"; exit 1; }
