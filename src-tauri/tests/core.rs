@@ -1,5 +1,6 @@
 // Exercise the persistence and export code without linking the desktop event loop.
 #![allow(dead_code)]
+#[path = "../src/cover.rs"] mod cover;
 #[path = "../src/storage.rs"] mod storage;
 #[path = "../src/text.rs"] mod text;
 #[path = "../src/dialog.rs"] mod dialog;

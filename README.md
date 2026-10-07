@@ -62,6 +62,10 @@ Android 侧的其余差异（没有系统文件选择器、导出写到应用私
 
 **左上：设置 + 书籍选择**
 - 点击左上角书籍卡片打开「书架」：新建 / 切换 / 编辑资料 / 删除作品，也可导入 `.json` 备份。
+- 作品可以设**封面图片**（可选功能）：书架卡片与左上角徽标都会换成封面，没设就用封面颜色 + 书名首字。
+  图片按原样存进数据目录（png / jpg / webp / gif / bmp，单张上限 4MB，不做重编码所以不掉画质），
+  导出 EPUB 时它会成为电子书封面，JSON 备份也带着它（base64）一起走，换机导入不会丢。
+  手机端没有系统文件选择器，这一项会自动变成一句说明，其余功能不受影响。
 - 齿轮按钮打开设置：**7 套主题**（浅色 / 羊皮纸 / 暗色 / Material Design 3 亮色 / MD3 暗色 / 极简黑白 / 青绿护眼）、
   **可搜索的字体选择器**（自动扫描系统字体，可搜索、可预览；装新字体只需把字体文件放进系统字体文件夹再点「重新扫描」）、
   字号、行距、字间距、正文栏宽、自动保存间隔、单章历史版本上限、新版本字数阈值、每日目标、一键排版风格。
@@ -140,6 +144,7 @@ settings.json                          全局设置
 books.json                             书架索引
 books/<bookId>/book.json               卷章目录树
 books/<bookId>/cards.json              人物 / 剧情 / 灵光 / 设定卡片
+books/<bookId>/cover.png               封面图片（可选，设过才有；扩展名跟着原图）
 content/<bookId>/<chapterId>.json      章节正文 + 历史版本
 exports/                               默认导出目录
 trash/                                 删除内容（可在回收站清空）
@@ -233,11 +238,12 @@ node .tooling/mobile-shot.mjs --name desk   --w 1440 --h 900 --hover    # 桌面
 
 ```powershell
 node --test tests/mobile-ui.test.mjs    # 窄屏 390×844 / 触屏平板 1024×768 / 桌面 1440×900
+node --test tests/dialogs.test.mjs      # 书架与作品资料里的封面图片（挑图 → 预览 → 保存 → 清除）
 ```
 
-它检查的是"移动端规则各自生效、且不污染桌面"这类容易回归的东西（抽屉与遮罩联动、点章节收起抽屉、
+它们检查的是"移动端规则各自生效、且不污染桌面"这类容易回归的东西（抽屉与遮罩联动、点章节收起抽屉、
 ⋮ 面板项与重命名/跨卷移动、整屏弹层几何与底部按钮贴边、Android 返回键的分层消费、
-桌面端 ⋮ 与「更多」必须隐藏）。
+桌面端 ⋮ 与「更多」必须隐藏；封面则是挑图预览、清除后回到颜色 + 图标、徽标与书架同步）。
 需要 Node ≥ 22（内置 WebSocket）与本机 Chrome/Edge，两者缺一就自动 skip，不会拖垮别的测试。
 
 要做纯界面改动（不经 Rust、不碰真实稿件）时，可以用内存示例数据在浏览器里预览：
@@ -334,7 +340,8 @@ src-tauri/src/
   lib.rs          应用入口、命令注册、--smoke-test 自检模式
   main.rs         Windows 可执行入口
   app.rs          Tauri 状态与全部 IPC 命令
-  storage.rs      本地持久化（书籍/卷/章/卡片/历史版本/设置）
+  storage.rs      本地持久化（书籍/卷/章/卡片/历史版本/设置/封面）
+  cover.rs        封面图片：格式白名单、体积上限、base64 与 data URL（手写，不引图像库）
   export.rs       导出渲染（TXT/MD/HTML/JSON/EPUB）与文件对话框
   zip.rs          极简 ZIP 写入器（EPUB 容器，无外部压缩依赖）
   text.rs         字数统计、中文数字、一键排版、章节切分、查找替换
@@ -366,6 +373,7 @@ src-tauri/tests/
 tests/
   editor.test.cjs 前端回归（Node 原生 test + vm 假 DOM，覆盖并发保存与切章丢稿）
   mobile-ui.test.mjs  移动端界面回归（无头 Chrome 跑三档视口）
+  dialogs.test.mjs    书架 / 作品资料的封面图片回归
   lib/chrome-cdp.mjs  极简 CDP 客户端（回归与截图共用，不引入 puppeteer）
   preview-server.cjs / preview-fixture.js  浏览器内的内存数据界面预览
 packaging/

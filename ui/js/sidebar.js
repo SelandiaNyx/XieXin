@@ -18,6 +18,8 @@ export function initSidebar({ onSelectChapter, onOpenBookPicker, onNewBook }) {
   els.bookTitle = document.getElementById('bookTitleLabel');
   els.bookMeta = document.getElementById('bookMetaLabel');
   els.bookDot = document.getElementById('bookDot');
+  // 记下原始的书籍图标：设过封面的作品换成封面图，没设的（或清除后）回到它
+  els.bookIcon = els.bookDot.innerHTML;
 
   els.bookSwitch.addEventListener('click', () => onOpenBookPicker());
   document.getElementById('addVolume').addEventListener('click', () => createVolume());
@@ -63,6 +65,10 @@ export function renderToc() {
   els.bookTitle.textContent = book.title;
   els.bookMeta.textContent = `${book.volumes.length} 卷 · ${bookChapterCount()} 章 · ${bookCharCount().toLocaleString()} 字`;
   els.bookDot.style.background = book.coverColor || 'var(--accent)';
+  // 设过封面就显示封面图，没设就回到原来的图标（清除封面后同样是这个分支）
+  els.bookDot.innerHTML = state.bookCover
+    ? `<img src="${escapeHtml(state.bookCover)}" alt="" />`
+    : els.bookIcon;
   els.tocStats.textContent = `卷 ${book.volumes.length} · 章 ${bookChapterCount()}`;
 
   const parts = [];

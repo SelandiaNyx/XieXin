@@ -670,7 +670,22 @@ kbd {
   width: 38px; height: 50px; border-radius: 6px; flex: none;
   display: flex; align-items: center; justify-content: center;
   color: #fff; font-size: 16px; font-weight: 700;
+  overflow: hidden;
 }
+/* 设过封面就用图片铺满色块，没设仍然是"颜色 + 书名首字" */
+.book-cover img, .book-emblem img, .cover-thumb img {
+  width: 100%; height: 100%; object-fit: cover; display: block; border-radius: inherit;
+}
+
+/* 封面字段（新建作品 / 编辑资料） */
+.cover-field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cover-thumb {
+  width: 46px; height: 60px; flex: none; border-radius: 6px;
+  border: 1px dashed var(--line-strong); background: var(--panel-2);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink-faint); font-size: 10px; overflow: hidden;
+}
+.cover-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
 .book-info { flex: 1; min-width: 0; }
 .book-info h4 { margin: 0 0 3px; font-size: 14px; }
 .book-info p { margin: 0; font-size: 11.5px; color: var(--ink-faint); }

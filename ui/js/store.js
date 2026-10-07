@@ -20,7 +20,11 @@ export const state = {
   registry: { books: [] },
   storageDir: '',
   storageBytes: 0,
+  /** 该平台有没有原生文件选择器（Android 没有） */
+  hasNativePickers: true,
   book: null,
+  /** 当前作品的封面（data URL），空串表示没设过、界面用颜色 + 图标 */
+  bookCover: '',
   cards: [],
   versions: [],
   sessionChars: 0,

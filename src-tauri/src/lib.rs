@@ -1,6 +1,7 @@
 //! 写心 · 本地小说写作工作台 —— 应用入口与 Tauri 命令注册。
 
 pub mod app;
+pub mod cover;
 pub mod dialog;
 pub mod export;
 pub mod smoke;
@@ -112,6 +113,10 @@ pub fn run() {
             app::open_book,
             app::delete_book,
             app::update_book_meta,
+            app::set_book_cover,
+            app::clear_book_cover,
+            app::book_cover,
+            app::preview_cover,
             app::book_stats,
             app::save_settings,
             app::set_last_position,

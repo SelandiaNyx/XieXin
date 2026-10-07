@@ -87,6 +87,7 @@ pub fn workspace_state(state: State<'_, AppState>) -> Result<WorkspaceState, Str
         registry: store.registry.clone(),
         storage_dir: store.root.to_string_lossy().to_string(),
         storage_bytes: store.storage_bytes(),
+        has_native_pickers: crate::dialog::FileFilter::has_native_pickers(),
         card_kinds: vec![
             "character".into(),
             "plot".into(),
@@ -129,11 +130,49 @@ pub fn open_book(state: State<'_, AppState>, book_id: String) -> Result<BookPayl
     store.settings.last_book_id = book_id.clone();
     store.save_settings()?;
     let cards = store.read_cards(&book_id)?;
+    let cover = store
+        .read_book_cover(&book_id)
+        .map(|(ext, bytes)| crate::cover::data_url(&ext, &bytes));
     Ok(BookPayload {
         book,
         cards,
         storage_dir: store.root.to_string_lossy().to_string(),
+        cover,
     })
+}
+
+/// 设置封面：前端先用 `pick_open_file({kind:"image"})` 选文件，再把路径传进来。
+#[tauri::command]
+pub fn set_book_cover(
+    state: State<'_, AppState>,
+    book_id: String,
+    source_path: String,
+) -> Result<BookMeta, String> {
+    let mut store = lock(&state)?;
+    store.set_book_cover(&book_id, &source_path)
+}
+
+#[tauri::command]
+pub fn clear_book_cover(state: State<'_, AppState>, book_id: String) -> Result<BookMeta, String> {
+    let mut store = lock(&state)?;
+    store.clear_book_cover(&book_id)
+}
+
+/// 书架列表用：只给没设过封面的书省钱（前端会先看 coverImage 再决定要不要问）。
+#[tauri::command]
+pub fn book_cover(state: State<'_, AppState>, book_id: String) -> Result<Option<String>, String> {
+    let store = lock(&state)?;
+    Ok(store
+        .read_book_cover(&book_id)
+        .map(|(ext, bytes)| crate::cover::data_url(&ext, &bytes)))
+}
+
+/// 选择封面前的预览：新书还没建出来，没法走 `book_cover`，这里直接把选中的本地图片
+/// 读成 data URL 给界面看。校验与 `set_book_cover` 同一处，不会绕开格式/体积限制。
+#[tauri::command]
+pub fn preview_cover(path: String) -> Result<String, String> {
+    let (ext, bytes) = crate::cover::read_image(&path)?;
+    Ok(crate::cover::data_url(&ext, &bytes))
 }
 
 #[tauri::command]
@@ -535,6 +574,10 @@ pub async fn pick_directory(title: Option<String>) -> Result<Option<String>, Str
 pub async fn pick_open_file(kind: Option<String>) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || match kind.as_deref() {
         Some("json") => export::pick_open_file(&[("写心备份", &["json"]), ("所有文件", &["*"])]),
+        Some("image") => export::pick_open_file(&[
+            ("图片", &["png", "jpg", "jpeg", "webp", "gif", "bmp"]),
+            ("所有文件", &["*"]),
+        ]),
         _ => export::pick_open_file(&[("文本文件", &["txt", "md"]), ("所有文件", &["*"])]),
     })
     .await
@@ -649,6 +692,13 @@ pub fn import_backup(
         for ch in vol.chapters.iter_mut() {
             ch.versions = 0;
         }
+    }
+    // 封面（可选）：备份里是 `{ ext, base64 }`，先落盘再写进 book.json，
+    // 认不出来的格式就当作没有封面 —— 缺封面不该让整份备份导入失败。
+    book.cover_image.clear();
+    if let Some((ext, bytes)) = export::cover_from_backup(&payload) {
+        store.write_book_cover_file(&book.id, &ext, &bytes)?;
+        book.cover_image = format!("cover.{ext}");
     }
     let chapters = payload
         .get("chapters")

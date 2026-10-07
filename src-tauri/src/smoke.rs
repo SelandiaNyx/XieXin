@@ -156,6 +156,32 @@ fn run_inner(store: &mut Store) -> Result<String, String> {
         fail!("卡片数量不正确：{}", cards.len());
     }
 
+    // ---- 封面（可选功能：设了要能用、错了要拒绝、清了要能回退）---------
+    let cover_src = store.root.join("smoke-cover.png");
+    std::fs::write(&cover_src, b"\x89PNG\r\n\x1a\nsmoke-cover").map_err(|e| e.to_string())?;
+    let with_cover = store.set_book_cover(&book.id, cover_src.to_string_lossy().as_ref())?;
+    if with_cover.cover_image != "cover.png" {
+        fail!("封面字段应为 cover.png，实际 {:?}", with_cover.cover_image);
+    }
+    let (cover_ext, cover_bytes) = store.read_book_cover(&book.id).ok_or("设置封面后读不到封面")?;
+    if cover_ext != "png" || cover_bytes.is_empty() {
+        fail!("封面读取异常：ext={cover_ext} 字节数={}", cover_bytes.len());
+    }
+    log.push(line(
+        "cover",
+        format!("封面已保存 {} 字节，字段={}", cover_bytes.len(), with_cover.cover_image),
+    ));
+
+    // 格式不支持的要被后端拒绝，而且不能把已经设好的封面带坏
+    let bad_src = store.root.join("smoke-cover.txt");
+    std::fs::write(&bad_src, b"not an image").map_err(|e| e.to_string())?;
+    if store.set_book_cover(&book.id, bad_src.to_string_lossy().as_ref()).is_ok() {
+        fail!("错误格式的图片不该被接受为封面");
+    }
+    if store.read_book_cover(&book.id).map(|(ext, _)| ext).as_deref() != Some("png") {
+        fail!("被拒绝的封面影响到了已有封面");
+    }
+
     // ---- 导出五种格式（含 EPUB 电子书）---------------------------------
     let out_dir = store.root.join("exports").join("smoke");
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
@@ -192,15 +218,35 @@ fn run_inner(store: &mut Store) -> Result<String, String> {
             if tail != b"PK\x05\x06" {
                 fail!("EPUB 缺少中央目录结束记录");
             }
-            log.push(line("epub", format!("ZIP 结构校验通过（{} 字节）", bytes.len())));
+            // 设过封面就要真的进包：图片文件 + manifest 的 cover-image 标记
+            let raw = String::from_utf8_lossy(&bytes);
+            if !raw.contains("OEBPS/cover.png") || !raw.contains("cover-image") {
+                fail!("EPUB 里没有带上封面");
+            }
+            log.push(line("epub", format!("ZIP 结构校验通过（{} 字节，含封面）", bytes.len())));
         }
         if fmt == "json" {
             let raw = std::fs::read_to_string(&res.path).map_err(|e| e.to_string())?;
             if !raw.contains("\"kind\": \"heartwrite-novel-backup\"") {
                 fail!("JSON 备份缺少标识字段");
             }
+            // 备份要能完整还原，封面也得带上（base64）
+            if !raw.contains("\"cover\"") || !raw.contains("\"base64\"") {
+                fail!("JSON 备份里没有带上封面");
+            }
+            log.push(line("json", "备份内含封面 base64"));
         }
     }
+
+    // ---- 清除封面：回到"没有封面"的状态（可选功能不能有残留）-----------
+    let cleared = store.clear_book_cover(&book.id)?;
+    if !cleared.cover_image.is_empty() || store.read_book_cover(&book.id).is_some() {
+        fail!("清除封面后仍能读到封面");
+    }
+    if store.cover_path(&book.id, "png").exists() {
+        fail!("清除封面后文件还留在磁盘上");
+    }
+    log.push(line("cover", "封面已清除，界面退回颜色 + 图标"));
 
     // ---- 统计（重新从磁盘读取，确保目录树与正文一致）--------------------
     let live_book = store.book(&book.id).map_err(|e| e.to_string())?;

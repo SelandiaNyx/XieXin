@@ -130,7 +130,7 @@ export function clearEditor() {
   markSaveState('ok', '就绪');
 }
 
-async function loadChapter(book, chapterId, cards = state.cards) {
+async function loadChapter(book, chapterId, cards = state.cards, cover = null) {
   const vol = book.volumes.find(v => v.chapters.some(c => c.id === chapterId));
   const ch = vol?.chapters.find(c => c.id === chapterId);
   if (!ch) throw new Error('找不到该章节');
@@ -151,6 +151,8 @@ async function loadChapter(book, chapterId, cards = state.cards) {
   editRevision += 1;
   setState({ book, cards, activeChapterId: chapterId, activeVolumeId: vol.id,
     content: res.content, versions, dirty: false, lastSavedAt: res.createdAt || Date.now() });
+  // 换书时带上当前作品的封面（data URL）；同一本书内切章传 null，保持不动
+  if (cover !== null) setState({ bookCover: cover || '' });
   applyingRemote = false;
   autoGrow();
   markSaveState('ok', '已保存');
@@ -183,8 +185,8 @@ export async function openBookInEditor(bookId) {
     const payload = await api.openBook(bookId);
     const all = payload.book.volumes.flatMap(v => v.chapters);
     const target = all.find(c => c.id === state.settings.lastChapterId) || all[0];
-    if (target) return loadChapter(payload.book, target.id, payload.cards);
-    setState({ book: payload.book, cards: payload.cards });
+    if (target) return loadChapter(payload.book, target.id, payload.cards, payload.cover);
+    setState({ book: payload.book, cards: payload.cards, bookCover: payload.cover || '' });
     clearEditor();
     return true;
   });

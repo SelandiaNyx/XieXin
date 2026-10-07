@@ -66,6 +66,14 @@ pub struct RecentExport {
     pub at: i64,
 }
 
+/// 备份里的封面：原样带上字节（base64），导入时能还原成同一张图。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupCover {
+    pub ext: String,
+    pub base64: String,
+}
+
 fn esc_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -263,6 +271,9 @@ struct BackupPayload<'a> {    kind: &'a str,
     version: &'a str,
     exported_at: i64,
     book: &'a BookMeta,
+    /// 封面（可选）：没设过就不写这个字段，老版本读到的备份结构不变
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cover: Option<BackupCover>,
     cards: Vec<crate::storage::Card>,
     chapters: Vec<BackupChapter>,
 }
@@ -294,6 +305,9 @@ fn render_json(book: &BookMeta, store: &Store) -> Result<(String, usize), String
         version: env!("CARGO_PKG_VERSION"),
         exported_at: now_ms(),
         book,
+        cover: store
+            .read_book_cover(&book.id)
+            .map(|(ext, bytes)| BackupCover { ext, base64: crate::cover::base64_encode(&bytes) }),
         cards: store.read_cards(&book.id)?,
         chapters,
     };
@@ -370,11 +384,26 @@ fn render_epub(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(V
                p{text-indent:2em;margin:0.6em 0;}\n\
                .meta{text-align:center;color:#666;text-indent:0;}\n\
                .summary{color:#444;text-indent:0;background:#f6f6f4;padding:0.8em;}\n\
-               .vol{text-align:center;font-size:1.3em;margin:2em 0 1em;}\n";
+               .vol{text-align:center;font-size:1.3em;margin:2em 0 1em;}\n\
+               .cover{text-align:center;text-indent:0;margin:0 0 1.2em;}\n\
+               .cover img{max-width:100%;height:auto;}\n";
+
+    // 封面（可选）：设过就原样塞进 EPUB，并让阅读器把它当封面用
+    let cover = store.read_book_cover(&book.id);
+    let cover_href = cover.as_ref().map(|(ext, _)| format!("cover.{ext}"));
+    let cover_meta = if cover_href.is_some() {
+        "    <meta name=\"cover\" content=\"cover-image\"/>\n".to_string()
+    } else {
+        String::new()
+    };
 
     let mut zip = ZipWriter::new();
     // mimetype 必须是第一个条目且不压缩
     zip.add("mimetype", "application/epub+zip");
+    if let (Some((ext, bytes)), Some(href)) = (cover.as_ref(), cover_href.as_ref()) {
+        zip.add(format!("OEBPS/{href}"), bytes);
+        let _ = ext;
+    }
     zip.add(
         "META-INF/container.xml",
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -397,6 +426,12 @@ fn render_epub(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(V
     front.push_str(&esc_html(&title));
     front.push_str("</title><link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\"/></head><body>");
     front.push_str(&format!("<h1>{}</h1>", esc_html(&title)));
+    if let Some(href) = cover_href.as_ref() {
+        front.push_str(&format!(
+            "<p class=\"cover\"><img src=\"{}\" alt=\"封面\"/></p>",
+            esc_html(href)
+        ));
+    }
     front.push_str(&format!("<p class=\"meta\">{}</p>", esc_html(&author)));
     if !book.summary.trim().is_empty() {
         front.push_str(&format!(
@@ -446,6 +481,14 @@ fn render_epub(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(V
     manifest.push_str("    <item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n");
     manifest.push_str("    <item id=\"css\" href=\"style.css\" media-type=\"text/css\"/>\n");
     manifest.push_str("    <item id=\"front\" href=\"front.xhtml\" media-type=\"application/xhtml+xml\"/>\n");
+    // 封面：manifest 里标 properties="cover-image"，metadata 里再挂 name="cover"，
+    // 这样微信读书 / 多看 / Apple Books 都会拿它当书封而不是正文插图。
+    if let (Some((ext, _)), Some(href)) = (cover.as_ref(), cover_href.as_ref()) {
+        manifest.push_str(&format!(
+            "    <item id=\"cover-image\" href=\"{href}\" media-type=\"{}\" properties=\"cover-image\"/>\n",
+            crate::cover::mime_for(ext)
+        ));
+    }
     spine.push_str("    <itemref idref=\"front\"/>\n");
     for it in &items {
         manifest.push_str(&format!(
@@ -466,11 +509,12 @@ fn render_epub(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(V
             seen
         };
         format!(
-            "    <meta property=\"dcterms:modified\">{modified}</meta>\n    <meta name=\"heartwrite:volumes\" content=\"{}\"/>\n",
-            esc_html(&vols.join(" / "))
+            "    <meta property=\"dcterms:modified\">{modified}</meta>\n    <meta name=\"heartwrite:volumes\" content=\"{}\"/>\n{cover_meta}",
+            esc_html(&vols.join(" / ")),
+            cover_meta = cover_meta
         )
     } else {
-        format!("    <meta property=\"dcterms:modified\">{modified}</meta>\n")
+        format!("    <meta property=\"dcterms:modified\">{modified}</meta>\n{cover_meta}")
     };
 
     let opf = format!(
@@ -629,6 +673,23 @@ pub fn pick_open_file(filters: &[(&str, &[&str])]) -> Option<String> {
     crate::dialog::open_file(&owned)
 }
 
+/// 从备份 JSON 里取出封面（`{ ext, base64 }`，可选字段）。
+///
+/// 返回 `Option` 而不是 `Result`：封面上任何一点不对劲都只当作"这次备份没有封面"，
+/// 不该让整份稿子的导入失败。
+pub fn cover_from_backup(payload: &serde_json::Value) -> Option<(String, Vec<u8>)> {
+    let cover = payload.get("cover")?;
+    let ext = cover.get("ext")?.as_str()?.to_ascii_lowercase();
+    if !crate::cover::ALLOWED_EXTS.contains(&ext.as_str()) {
+        return None;
+    }
+    let bytes = crate::cover::base64_decode(cover.get("base64")?.as_str()?)?;
+    if bytes.is_empty() || bytes.len() as u64 > crate::cover::MAX_COVER_BYTES {
+        return None;
+    }
+    Some((ext, bytes))
+}
+
 pub fn suggest_filename(store: &Store, book_id: &str, opt: &ExportOptions) -> Result<String, String> {
     let book = store.book(book_id)?;
     let ext = match opt.format.to_lowercase().as_str() {
@@ -644,6 +705,32 @@ pub fn suggest_filename(store: &Store, book_id: &str, opt: &ExportOptions) -> Re
 #[cfg(test)]
 mod export_tests {
     use super::*;
+
+    #[test]
+    fn backup_cover_parses_only_usable_images() {
+        let bytes = b"fake-png-bytes".to_vec();
+        let payload = serde_json::json!({
+            "cover": { "ext": "PNG", "base64": crate::cover::base64_encode(&bytes) }
+        });
+        // 扩展名会转小写，字节原样还原（这样导入回来的封面和导出的是同一张）
+        assert_eq!(cover_from_backup(&payload), Some(("png".to_string(), bytes)));
+
+        // 缺字段 / 不认识的格式 / 非法 base64 / 空内容，一律当作"这份备份没有封面"
+        assert_eq!(cover_from_backup(&serde_json::json!({})), None);
+        assert_eq!(cover_from_backup(&serde_json::json!({ "cover": {} })), None);
+        assert_eq!(
+            cover_from_backup(&serde_json::json!({ "cover": { "ext": "exe", "base64": "AAAA" } })),
+            None
+        );
+        assert_eq!(
+            cover_from_backup(&serde_json::json!({ "cover": { "ext": "png", "base64": "不是 base64" } })),
+            None
+        );
+        assert_eq!(
+            cover_from_backup(&serde_json::json!({ "cover": { "ext": "png", "base64": "" } })),
+            None
+        );
+    }
 
     /// 回归测试：段落缩进选项曾经完全不生效 —— `p.trim()` 会把全角空格 U+3000
     /// 一起删掉（它是 Unicode 空白），导致 `if indent { p }` 拿到的是已去缩进的文本。

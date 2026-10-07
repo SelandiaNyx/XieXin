@@ -126,6 +126,8 @@ pub struct BookMeta {
     pub genre: String,
     pub summary: String,
     pub cover_color: String,
+    /// 封面图片的文件名（`books/<id>/cover.<ext>`）；空串表示没设过，界面退回纯色 + 图标。
+    pub cover_image: String,
     pub created_at: i64,
     pub updated_at: i64,
     pub volumes: Vec<Volume>,
@@ -142,6 +144,7 @@ impl Default for BookMeta {
             genre: String::new(),
             summary: String::new(),
             cover_color: "#7c6bd6".into(),
+            cover_image: String::new(),
             created_at: t,
             updated_at: t,
             volumes: Vec::new(),
@@ -302,6 +305,8 @@ pub struct BookPayload {
     pub book: BookMeta,
     pub cards: Vec<Card>,
     pub storage_dir: String,
+    /// 封面（data URL，可直接放进 <img src>）；没设过是 None。
+    pub cover: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -311,6 +316,8 @@ pub struct WorkspaceState {
     pub registry: Registry,
     pub storage_dir: String,
     pub storage_bytes: u64,
+    /// 该平台有没有原生文件选择器（Android 上没有，界面要藏掉"选择封面图片"这类按钮）
+    pub has_native_pickers: bool,
     pub card_kinds: Vec<String>,
 }
 
@@ -729,6 +736,72 @@ impl Store {
             self.save_settings()?;
         }
         Ok(())
+    }
+
+    // -- 封面（可选功能：没设过就一切照旧）------------------------------------
+
+    /// 封面的落盘路径：固定叫 `cover.<ext>`，扩展名记在 `cover_image` 里。
+    pub fn cover_path(&self, book_id: &str, ext: &str) -> PathBuf {
+        self.root.join("books").join(book_id).join(format!("cover.{ext}"))
+    }
+
+    /// 读封面原始字节。没设过、或文件被外面删掉了，都返回 `None`：
+    /// 界面据此安静地退回默认外观，而不是报错打断用户。
+    pub fn read_book_cover(&self, book_id: &str) -> Option<(String, Vec<u8>)> {
+        let book = self.book(book_id).ok()?;
+        let ext = crate::cover::cover_ext(&book.cover_image)?;
+        let bytes = fs::read(self.cover_path(book_id, &ext)).ok()?;
+        (!bytes.is_empty()).then_some((ext, bytes))
+    }
+
+    /// 设置封面：把用户选中的图片复制进 `books/<id>/cover.<ext>` 并记进 book.json。
+    /// 校验（白名单 / 体积 / 非空）统一在 `cover::read_image` 里，任何入口都绕不过。
+    pub fn set_book_cover(&mut self, book_id: &str, source: &str) -> Result<BookMeta, String> {
+        let (ext, bytes) = crate::cover::read_image(source)?;
+        if let Some(dir) = self.cover_path(book_id, &ext).parent() {
+            fs::create_dir_all(dir).map_err(|e| format!("无法创建封面目录：{e}"))?;
+        }
+        // 换了格式就删掉旧封面，避免目录里同时躺着两张
+        let previous = self.book(book_id).map(|b| b.cover_image).unwrap_or_default();
+        if !previous.is_empty() && previous != format!("cover.{ext}") {
+            let _ = fs::remove_file(self.root.join("books").join(book_id).join(&previous));
+        }
+        fs::write(self.cover_path(book_id, &ext), &bytes).map_err(|e| format!("保存封面失败：{e}"))?;
+        let snapshot = {
+            let book = self.book_mut(book_id)?;
+            book.cover_image = format!("cover.{ext}");
+            book.updated_at = now_ms();
+            book.clone()
+        };
+        self.save_book(&snapshot)?;
+        self.save_registry()?;
+        Ok(snapshot)
+    }
+
+    /// 清除封面：删文件 + 清字段。本来就没有封面时也当成功（幂等）。
+    pub fn clear_book_cover(&mut self, book_id: &str) -> Result<BookMeta, String> {
+        let previous = self.book(book_id).map(|b| b.cover_image).unwrap_or_default();
+        if !previous.is_empty() {
+            let _ = fs::remove_file(self.root.join("books").join(book_id).join(&previous));
+        }
+        let snapshot = {
+            let book = self.book_mut(book_id)?;
+            book.cover_image.clear();
+            book.updated_at = now_ms();
+            book.clone()
+        };
+        self.save_book(&snapshot)?;
+        self.save_registry()?;
+        Ok(snapshot)
+    }
+
+    /// 导入备份时用：备份里存的是 base64，解出来的字节直接落盘（字段由调用方写进 book.json）。
+    pub fn write_book_cover_file(&self, book_id: &str, ext: &str, bytes: &[u8]) -> Result<(), String> {
+        let dst = self.cover_path(book_id, ext);
+        if let Some(dir) = dst.parent() {
+            fs::create_dir_all(dir).map_err(|e| format!("无法创建封面目录：{e}"))?;
+        }
+        fs::write(&dst, bytes).map_err(|e| format!("写入封面失败：{e}"))
     }
 
     fn move_to_trash(&self, relative: &str) -> Option<PathBuf> {
@@ -1350,6 +1423,9 @@ impl Store {
     pub fn verify_book(&self, book_id: &str) -> Result<Vec<String>, String> {
         let book = self.book(book_id)?;
         let mut fixed = Vec::new();
+        if !book.cover_image.is_empty() && self.read_book_cover(book_id).is_none() {
+            fixed.push(format!("封面文件不见了（{}）", book.cover_image));
+        }
         for vol in &book.volumes {
             for ch in &vol.chapters {
                 let c = self.read_content(book_id, &ch.id)?;
@@ -1388,6 +1464,64 @@ mod reliability_tests {
     }
     fn save(store: &mut Store, book: &str, chapter: &str, text: &str, manual: bool) -> Result<SaveResult, String> {
         store.save_chapter(book, chapter, text, None, None, None, manual, "", if manual { "manual" } else { "auto" })
+    }
+
+    #[test]
+    fn cover_round_trip_swap_format_and_clear() {
+        let ws = Workspace::new();
+        let mut store = ws.store();
+        let (book_id, _) = draft(&mut store);
+
+        // 内容不重要（这里不做图像解码），扩展名才决定格式；顺便覆盖大写扩展名
+        let first = ws.0.join("我的封面.PNG");
+        fs::write(&first, b"fake-png-bytes").unwrap();
+        let book = store.set_book_cover(&book_id, first.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(book.cover_image, "cover.png");
+        assert_eq!(store.book(&book_id).unwrap().cover_image, "cover.png");
+        let (ext, bytes) = store.read_book_cover(&book_id).unwrap();
+        assert_eq!((ext.as_str(), bytes.as_slice()), ("png", b"fake-png-bytes".as_ref()));
+        // 封面记进了 registry，书架列表拿得到
+        assert_eq!(store.registry.books[0].cover_image, "cover.png");
+
+        // 换成 jpg：旧文件必须被清掉，目录里不能留两张
+        let second = ws.0.join("cover2.jpg");
+        fs::write(&second, b"fake-jpg").unwrap();
+        store.set_book_cover(&book_id, second.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(store.book(&book_id).unwrap().cover_image, "cover.jpg");
+        assert!(!ws.0.join("books").join(&book_id).join("cover.png").exists());
+        assert_eq!(store.read_book_cover(&book_id).unwrap().1, b"fake-jpg");
+
+        // 不支持的类型、空文件都拒绝
+        let text = ws.0.join("note.txt");
+        fs::write(&text, b"x").unwrap();
+        assert!(store.set_book_cover(&book_id, text.to_string_lossy().as_ref()).is_err());
+        let empty = ws.0.join("empty.png");
+        fs::write(&empty, b"").unwrap();
+        assert!(store.set_book_cover(&book_id, empty.to_string_lossy().as_ref()).is_err());
+        // 被拒绝之后仍然是原来那张 jpg
+        assert_eq!(store.book(&book_id).unwrap().cover_image, "cover.jpg");
+
+        // 清除后回到"没有封面"的状态，重复清除也安全
+        store.clear_book_cover(&book_id).unwrap();
+        assert!(store.book(&book_id).unwrap().cover_image.is_empty());
+        assert!(store.read_book_cover(&book_id).is_none());
+        assert!(store.clear_book_cover(&book_id).is_ok());
+    }
+
+    #[test]
+    fn missing_cover_file_degrades_quietly_and_is_reported() {
+        let ws = Workspace::new();
+        let mut store = ws.store();
+        let (book_id, _) = draft(&mut store);
+        let src = ws.0.join("cover.png");
+        fs::write(&src, b"bytes").unwrap();
+        store.set_book_cover(&book_id, src.to_string_lossy().as_ref()).unwrap();
+
+        // 模拟用户在资源管理器里把封面删了：读取返回 None，体检报告里能看到
+        fs::remove_file(ws.0.join("books").join(&book_id).join("cover.png")).unwrap();
+        assert!(store.read_book_cover(&book_id).is_none());
+        let report = store.verify_book(&book_id).unwrap();
+        assert!(report.iter().any(|line| line.contains("封面文件不见了")), "体检没报出缺失的封面：{report:?}");
     }
 
     #[test]

@@ -2,7 +2,7 @@
 (() => {
   const now = Date.now();
   const settings = { theme: 'light', fontFamily: '"Microsoft YaHei", sans-serif', fontSize: 17, lineHeight: 2.1, letterSpacing: .02, editorWidth: 860, autosaveSecs: 20, dailyGoal: 3000, historyDepth: 30, lastBookId: 'sample', oneClickFormatRule: 'cjk-indent' };
-  const book = { id: 'sample', title: '剑气长河', author: '示例作者', genre: '武侠', coverColor: '#147d6c', createdAt: now, updatedAt: now, volumes: [
+  const book = { id: 'sample', title: '剑气长河', author: '示例作者', genre: '武侠', coverColor: '#147d6c', coverImage: 'cover.png', createdAt: now, updatedAt: now, volumes: [
     { id: 'v1', title: '第一卷 · 风起北境', expanded: true, chapters: [{ id: 'c1', title: '第一章 雪夜', status: 'revising', charCount: 159, versions: 3 }, { id: 'c2', title: '第二章 旧约', status: 'draft', charCount: 76, versions: 1 }, { id: 'c3', title: '第三章 落子', status: 'draft', charCount: 32, versions: 1 }] },
     { id: 'v2', title: '第二卷 · 山河故人', expanded: true, chapters: [{ id: 'c4', title: '第四章 长夜', status: 'draft', charCount: 0, versions: 0 }] },
   ] };
@@ -12,15 +12,32 @@
   const versions = [{ id: 'version1', label: '开篇初稿', kind: 'manual', createdAt: now - 86400000, chars: 50 }];
   const empty = new URLSearchParams(location.search).has('empty');
   const clone = value => JSON.parse(JSON.stringify(value));
+  // 96×128 的示例封面（真的 PNG，不是占位符）：截图与回归里能看出"封面图确实渲染了"
+  const COVER = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAACACAIAAAB7vvvtAAABl0lEQVR42u3dO07DQBQF0DeIJbAG6FgBWQAKDaInHR0FFbvg01DRxBugIRI9O6CDzQwNSiSCLQ8YyfKcVyUSWOHqnTsmKZL2jh4ickROERE5RY6vB5unKXJsHnx7uv7JKLzO+ld6XqftBZS+nrLr7ITpnN1IQhDQHwYxGzR4QB+r82rjOJ5fIjYQsYOTZVX3QS/P9xGxnUZ7B9XZTQIqDUgH/fqYt0ECQgwxxBBDDDEB6SCjgxBDDDHEEEMMMQEJSAfpIMQQQwwxAQlIB+kgxBBDDDHEEENMQALSQToIMcQQQwwxgxhiAtJBOggxxBCzQQISkA7SQYghhhhiiBnEEBOQDtJBiCGGmA1CDDHEEBOQDtJBiAkIMcQQQwwxxASkg3RQ7w16u5rUN7bMb68RK9PUElDvObxrJvbNLI55p5iAHPP+1aiH2OvidMx/2tnyBrFxE5s1T6O+D0pOMaeYU8yNooB0kLFBiCGGGGKIIVY5sfeLhYA6NyhsUMvnYvuPTef7ONP5XOyn69igwUraOOZtkID+fz4BIVgDKxIeCMUAAAAASUVORK5CYII=';
   const stats = () => ({ charCount: 267, chapters: 4, volumes: 2, cards: cards.length, words: 0, cjk: 267, versions: 5, todayChars: 159 });
   window.__TAURI__ = { core: { invoke: async (cmd, args = {}) => {
     switch (cmd) {
       case 'ui_ready': return 'preview';
       case 'ui_log': console.log(args.message); return;
-      case 'workspace_state': return clone({ settings, registry: { books: empty ? [] : [book] }, storageDir: '界面预览 · 临时示例数据', storageBytes: 24576 });
+      case 'workspace_state': return clone({ settings, registry: { books: empty ? [] : [book] }, storageDir: '界面预览 · 临时示例数据', storageBytes: 24576, hasNativePickers: true });
       case 'chapter_statuses': return clone(statuses);
       case 'list_fonts': return [];
-      case 'open_book': return clone({ book, cards });
+      case 'open_book': return clone({ book, cards, cover: book.coverImage ? COVER : null });
+      // 封面：预览、读取、设置、清除都在内存里走一遍真实的界面流程
+      case 'pick_open_file': return args.kind === 'image' ? 'D:/示例/新封面.png' : null;
+      case 'preview_cover': return COVER;
+      case 'book_cover': return book.coverImage ? COVER : '';
+      case 'set_book_cover': book.coverImage = 'cover.png'; return clone(book);
+      case 'clear_book_cover': book.coverImage = ''; return clone(book);
+      // 资料弹层保存时会先改元信息，再单独落封面；这里照着后端的字段语义改内存里的书
+      case 'update_book_meta': {
+        if (args.title) book.title = args.title;
+        if (args.author !== undefined) book.author = args.author;
+        if (args.genre !== undefined) book.genre = args.genre;
+        if (args.summary !== undefined) book.summary = args.summary;
+        if (args.coverColor) book.coverColor = args.coverColor;
+        return clone(book);
+      }
       case 'read_chapter': return { content: content[args.chapterId], createdAt: now };
       case 'list_versions': return clone(versions);
       case 'save_chapter': content[args.chapterId] = args.content; return { updatedAt: Date.now(), charCount: args.content.length, versions: 3 };

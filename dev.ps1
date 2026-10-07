@@ -62,6 +62,9 @@ switch ($Task) {
     # 界面回归：无头 Chrome 跑真实界面的三档视口（没装 Chrome 会自动跳过）
     node --test (Join-Path $ws 'tests\mobile-ui.test.mjs')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # 书架 / 资料弹层里的封面图片（同样需要 Chrome）
+    node --test (Join-Path $ws 'tests\dialogs.test.mjs')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     cargo test --manifest-path $manifest --test core
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     cargo build --manifest-path $manifest
