@@ -11,7 +11,7 @@
 # 发布新版本时需要同步更新：pkgver、sha256sums（用 `updpkgsums` 自动填）。
 
 pkgname=xiexin-bin
-pkgver=0.1.1
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='写心 · 本地小说写作工作台（离线优先的中文长篇写作工具）'
 arch=('x86_64')
