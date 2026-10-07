@@ -1,0 +1,70 @@
+{
+  // 任务都用 pwsh -File dev.ps1 包一层：工具链路径由脚本自己指定，
+  // 不依赖系统 PATH 上有没有 cargo / gcc。
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "写心: 类型检查 (dev.ps1 check)",
+      "type": "shell",
+      "command": "pwsh -NoLogo -NoProfile -File dev.ps1 check",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$rustc"],
+      "presentation": { "reveal": "silent", "panel": "dedicated" }
+    },
+    {
+      "label": "写心: 调试构建 (dev.ps1 build)",
+      "type": "shell",
+      "command": "pwsh -NoLogo -NoProfile -File dev.ps1 build",
+      "group": "build",
+      "problemMatcher": ["$rustc"],
+      "presentation": { "reveal": "silent", "panel": "dedicated" }
+    },
+    {
+      "label": "写心: 全量测试 (dev.ps1 test)",
+      "type": "shell",
+      "command": "pwsh -NoLogo -NoProfile -File dev.ps1 test",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": ["$rustc"],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "写心: 无头端到端自检 (dev.ps1 smoke)",
+      "type": "shell",
+      "command": "pwsh -NoLogo -NoProfile -File dev.ps1 smoke",
+      "group": "test",
+      "problemMatcher": ["$rustc"],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "写心: 启动应用 (dev.ps1 run)",
+      "type": "shell",
+      "command": "pwsh -NoLogo -NoProfile -File dev.ps1 run",
+      "problemMatcher": ["$rustc"],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "写心: 界面预览服务 (4173)",
+      "type": "shell",
+      "command": "node tests/preview-server.cjs",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "xiexin-preview",
+        "pattern": [{ "regexp": "^(.*)$", "message": 1 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "UI preview: http://"
+        }
+      },
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "写心: 手机视口截图 (mobile-shot)",
+      "type": "shell",
+      "command": "node .tooling/mobile-shot.mjs --name mobile-editor",
+      "dependsOn": "写心: 界面预览服务 (4173)",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    }
+  ]
+}

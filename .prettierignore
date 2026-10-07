@@ -1,0 +1,18 @@
+# Prettier 不处理的文件
+# 应用外壳是手写折行的（一个按钮一行、属性顺序有意为之），
+# 让 Prettier 接管会把 index.html 拆成几百行，收益为负。
+ui/index.html
+
+# 构建产物与本地工具链
+.shots/
+release/
+packaging/dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+.rustup/
+.cargo/
+.tooling/mingw/
+.self-check-data/
+.smoke-data/
+*.min.js
+*.min.css

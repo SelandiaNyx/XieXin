@@ -12,9 +12,37 @@
 - 手动快照保存当前正文（包含已自动保存的内容）；修正回滚后正文不刷新、括号配对、英文数字统计和确认弹窗。
 - 普通启动现在遵守 `--data-dir`；内置自检使用独立临时目录。
 
-`pwsh -File dev.ps1 test` 运行前端回归、Rust 核心测试和纯函数自检，前端测试需要 Node.js。
+`pwsh -File dev.ps1 test` 运行前端回归、**三档视口的界面回归**、Rust 核心测试和纯函数自检
+（Node 测试需要 Node.js；界面回归另需 Node ≥ 22 与本机 Chrome，没有就自动跳过）。
 `node tests/preview-server.cjs` 在本机 4173 端口预览真实界面；预览只使用内存示例数据，实际保存与导出请使用桌面应用。
 界面验收截图用 `.tooling/screenshot.ps1` 生成，编号命名的那些会进仓库（详见下文「界面验收与截图」）。
+
+## 手机端 / 窄屏适配
+
+界面原本是按 1040×640 以上的桌面窗口设计的，Android 版能装上，但三栏挤进一部手机就没法写了。
+现在多了一层 `ui/mobile.css` + `ui/js/mobile.js`，把同一套界面收进手机；**桌面端（≥901px 且带鼠标）的
+布局与操作完全不变**——所有移动端规则都在 `@media (max-width: 900px)` 或 `@media (hover: none)` 里。
+
+- **单列 + 抽屉**：目录与素材变成左右滑出的抽屉，正文独占屏幕；点遮罩、点章节、开弹层都会自动收起抽屉。
+  窄屏上两个抽屉不会同时开着（保留刚打开的那个）。
+- **顶栏瘦身**：只留「目录 / 章节标题 / 更多 / 保存」，搜索、快照、历史、导出、素材、设置收进「更多」底部菜单；
+  章节状态、排版、专注仍留在正文工具条上，状态栏只留保存状态与计数器。
+- **触屏操作**：桌面上悬停才出现的 ↑↓✎✕ 在手机上会挤掉章节标题，因此改成每行一个 **⋮**，
+  点开是底部操作面板（上移 / 下移 / 重命名 / 移动到其他卷 / 删除），面板项就是原来那些按钮；
+  触屏同时关掉 `draggable`——HTML5 拖拽在手机上不工作，跨卷整理改用「移动到其他卷…」弹层
+  （选目标卷 + 插入位置，位置按"先把本章摘掉之后"的目标卷列表算，与后端 `move_chapter_to` 的语义一致）。
+- **返回键**：Android 硬件返回键默认会把应用直接退掉。现在接了
+  `tauri-plugin-mobile-onbackpressed-listener`（只在 Android/iOS 编译），按
+  「行内面板 → 弹层 → 抽屉 → 退出专注/查找 → 关闭窗口」的顺序消费；
+  最后一档走 `getCurrentWindow().close()`，也就是应用原有的保存守卫，不会丢稿。
+- **弹层铺满整屏**：标题固定、正文滚动、底部按钮贴屏幕下沿；表单改单列、统计卡片两列、版本对比上下堆叠、
+  大纲表收起「概要」列、主题预览改为纵向堆叠。
+- **手机细节**：`100dvh` 跟随地址栏与输入法高度、`env(safe-area-inset-*)` 避开刘海和手势条、
+  点击目标放大到 38~48px、`viewport-fit=cover` 与 `interactive-widget=resizes-content`；
+  手机上不自动聚焦正文，免得一开屏就弹输入法。
+- **窗口配置**：桌面端才指定 `inner_size` / `min_inner_size`；原来那条 1040×640 的最小尺寸会把手机版卡在桌面布局上。
+
+Android 侧的其余差异（没有系统文件选择器、导出写到应用私有目录、导入 TXT 暂不支持）见下文「三个平台怎么构建」。
 
 ## 界面动效
 
@@ -168,6 +196,7 @@ tar -xzf XieXin-linux-0.1.1.tar.gz && ./XieXin-linux-0.1.1/HeartWrite
 **Android 上的行为差异**（不是 bug，是平台限制）：`rfd` 没有 Android 后端，所以文件选择器不可用。
 导出会直接写到应用私有导出目录（与桌面端"不指定路径"时一致），导入 TXT 暂不支持。
 其余功能——写作、版本历史、字数统计、一键排版、EPUB/TXT/MD/HTML/JSON 导出、卡片墙——都可用。
+界面本身已按手机窄屏适配（见上文「手机端 / 窄屏适配」），桌面端行为不受影响。
 
 ### 界面验收与截图
 
@@ -179,6 +208,37 @@ pwsh -File .tooling/screenshot.ps1 -Name preview  -Url "index.html?open=preview&
 
 截图会自动编号写入 `.shots/`（如 `.shots/04-preview.png`）。按 `.gitignore` 约定，**只有编号命名的截图会进仓库**，
 其余（调试用的中间产物）留在本地，因此顺手 `git add .shots` 就能把"这一轮已核对过的界面状态"固化进提交。
+
+手机端截同一个套路，用 `.tooling/mobile-shot.mjs`（无头 Chrome + 真实手机视口，会模拟触屏与粗指针）：
+
+```powershell
+node tests/preview-server.cjs                                   # 先起预览服务（另一个终端）
+# 触屏手机：主界面 / 目录抽屉 / 顶栏「更多」/ 整屏弹层 / 行内 ⋮ 操作面板
+node .tooling/mobile-shot.mjs --name mobile-editor
+node .tooling/mobile-shot.mjs --name mobile-toc      --eval "document.getElementById('toggleSidebar').click()"
+node .tooling/mobile-shot.mjs --name mobile-more     --eval "document.getElementById('mobileMore').click()"
+node .tooling/mobile-shot.mjs --name mobile-settings --eval "document.getElementById('openSettings').click()"
+node .tooling/mobile-shot.mjs --name mobile-row-actions `
+  --eval "document.getElementById('toggleSidebar').click(); setTimeout(() => document.querySelector('.chapter-row .row-more').click(), 500)"
+# 另外两档对照
+node .tooling/mobile-shot.mjs --name tablet --w 1024 --h 768            # 触屏平板：三栏 + 行内 ⋮
+node .tooling/mobile-shot.mjs --name desk   --w 1440 --h 900 --hover    # 桌面鼠标：移动端规则全不生效
+```
+
+`--eval` 会在截图前执行一段 JS，它同时也是断言手段：脚本抛错就说明界面行为不对。
+仓库里的 `.shots/07-mobile-editor.png` ~ `11-mobile-row-actions.png` 就是手机那五条命令产出的
+（编号由脚本自己递增；`--name` 里带路径分隔符时按完整路径写）。
+
+同一条链路也固化成了回归测试，随 `dev.ps1 test` 一起跑：
+
+```powershell
+node --test tests/mobile-ui.test.mjs    # 窄屏 390×844 / 触屏平板 1024×768 / 桌面 1440×900
+```
+
+它检查的是"移动端规则各自生效、且不污染桌面"这类容易回归的东西（抽屉与遮罩联动、点章节收起抽屉、
+⋮ 面板项与重命名/跨卷移动、整屏弹层几何与底部按钮贴边、Android 返回键的分层消费、
+桌面端 ⋮ 与「更多」必须隐藏）。
+需要 Node ≥ 22（内置 WebSocket）与本机 Chrome/Edge，两者缺一就自动 skip，不会拖垮别的测试。
 
 要做纯界面改动（不经 Rust、不碰真实稿件）时，可以用内存示例数据在浏览器里预览：
 
@@ -198,6 +258,43 @@ node tests/preview-server.cjs   # http://127.0.0.1:4173 ，加 ?empty 看空状�
 - 若目录联接创建失败，脚本会自动退回 8.3 短路径。
 
 依赖：Windows + WebView2 运行时（Win10/11 系统自带）。
+
+### 从零装回这套工具链
+
+工具链目录都在 `.gitignore` 里，新克隆的仓库需要自己装一遍（装完 `dev.ps1` 原样可用）：
+
+```powershell
+# 1) rustup + GNU 目标工具链，装进工作区（与 dev.ps1 的 RUSTUP_HOME / CARGO_HOME 约定一致）
+$env:RUSTUP_HOME = "$PWD\.rustup"; $env:CARGO_HOME = "$PWD\.cargo"
+Invoke-WebRequest https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-gnu/rustup-init.exe -OutFile rustup-init.exe
+.\rustup-init.exe -y --no-modify-path --profile default --default-toolchain stable-x86_64-pc-windows-gnu
+
+# 2) MinGW-w64：w64devkit 解压到 .tooling\mingw\（v1.23.0 是最后一个提供的 .zip 版本）
+Invoke-WebRequest https://github.com/skeeto/w64devkit/releases/download/v1.23.0/w64devkit-1.23.0.zip -OutFile w64devkit.zip
+Expand-Archive w64devkit.zip -DestinationPath .tooling\mingw
+
+pwsh -File dev.ps1 check      # 验证：能编译就说明工具链齐了
+```
+
+w64devkit 不带 `libgcc_eh.a` 这类 GCC 运行库，而 rustc 的 GNU 目标链接时会要，所以 `dev.ps1`
+每次启动都会把 rustc 自带的 `self-contained` 导入库里 **MinGW 缺的那些**补进去（已存在的不覆盖），
+报错 `ld.exe: cannot find -lgcc_eh` 就是这一步没做过。
+
+### VS Code 里怎么用
+
+仓库自带一套团队级配置（`.vscode/`，个人配置仍被 gitignore）：
+
+- `extensions.json`：打开仓库时提示安装 rust-analyzer、Tauri、CodeLLDB、Even Better TOML、Dependi、
+  PowerShell、Prettier、HTML CSS Support、YAML、GitHub Actions / Pull Requests、EditorConfig 与中文语言包；
+- `settings.json`：把 `RUSTUP_HOME` / `CARGO_HOME` / MinGW 路径塞给 rust-analyzer，
+  所以工作区工具链不在 PATH 上也能补全和跳转；顺手排除了 `target/`、`.rustup/`、`.tooling/mingw/` 的搜索与监听；
+- `tasks.json`：`dev.ps1 check / build / test / smoke / run`、界面预览服务、手机视口截图；
+- `launch.json`：CodeLLDB 直接调 `novel-manager.exe`（cargo 由前置任务在 dev.ps1 的环境里跑），
+  另有"空数据目录"配置和浏览器调界面的配置。
+
+`.editorconfig` 与 `.prettierrc.json` 是编码约定：除 `*.ps1` 用 CRLF 外一律 LF、缩进 2 空格（Rust 4 空格）、
+Prettier 沿用仓库既有的单引号 + 120 列；`ui/index.html` 是手写折行的，已放进 `.prettierignore`。
+`gh auth login` 需要手动跑一次，GitHub 那两个插件才有数据。
 
 ### 开发辅助开关（日常使用不需要）
 
@@ -225,6 +322,10 @@ node tests/preview-server.cjs   # http://127.0.0.1:4173 ，加 ?empty 看空状�
 3. **手填「保存位置」会直接覆盖同名文件**：留空时自动编号、用「选择…」时系统会问是否替换，但手动粘贴一个已存在的路径会静默覆盖（包括覆盖上次的 JSON 备份）。
 4. **`books.json` / `settings.json` 损坏时启动即退出**，没有提示窗口和恢复入口。稿件文件本身完好，但用户会以为"书架没了"。
 5. 计数/显示不一致的三处小问题：首次保存新章节会留下一个「自动存档 0 字」的空版本；删除单个版本后目录树版本数不刷新；导入 JSON 备份后每章显示 0 个版本。都不影响正文。
+6. **手机端界面没有真机自动化验收**：`tests/mobile-ui.test.mjs` 跑的是无头 Chrome 的视口模拟，
+   能覆盖布局与交互逻辑，但软键盘遮挡、刘海安全区（模拟环境里 inset 恒为 0）、触摸手势、
+   Android 返回键的真实回调都只有 CI 出的 APK 装到设备上才能确认。本机没有 JDK/SDK/NDK，
+   也没有模拟器，这一步目前只能人工做。
 
 ## 代码结构
 
@@ -243,12 +344,15 @@ ui/
   index.html      三栏工作台骨架
   styles.css      7 套主题与基础组件样式
   workspace.css   新版工作台布局、主题细节与窗口适配
+  mobile.css      手机 / 窄屏适配（单列 + 抽屉 + 整屏弹层，桌面端不受影响）
   js/main.js      入口、快捷键、会话统计、全局事件绑定
   js/store.js     全局状态（含章节状态表）
   js/api.js       IPC 封装
-  js/sidebar.js   卷章目录树（含拖拽、状态色点）
+  js/viewport.js  窄屏 / 触屏判断（两者分开，且避免模块互相 import）
+  js/sidebar.js   卷章目录树（含拖拽、状态色点、触屏 ⋮、移动到其他卷）
   js/editor.js    正文编辑、自动保存、字数统计、章节状态、切章与保存加锁
   js/cards.js     卡片墙
+  js/mobile.js    手机端交互（抽屉遮罩、行内操作面板、顶栏「更多」、Android 返回键）
   js/pomodoro.js  番茄钟（开始/暂停/重置/跳过、时长设置、本地保存）
   js/dialogs.js   书架/设置/导出/历史/统计/大纲/搜索/回收站/帮助
   js/ui.js        提示条、通用弹层、数字滚动动效
@@ -261,11 +365,18 @@ src-tauri/tests/
   core.rs         挂载 storage/text/export/zip 模块，让 cargo test 无需链接桌面事件循环
 tests/
   editor.test.cjs 前端回归（Node 原生 test + vm 假 DOM，覆盖并发保存与切章丢稿）
+  mobile-ui.test.mjs  移动端界面回归（无头 Chrome 跑三档视口）
+  lib/chrome-cdp.mjs  极简 CDP 客户端（回归与截图共用，不引入 puppeteer）
   preview-server.cjs / preview-fixture.js  浏览器内的内存数据界面预览
 packaging/
   package.ps1     产出便携版目录与 release/HeartWrite-Windows.zip
 dev.ps1           一行命令完成构建 / 运行 / 自检 / 发布
 .tooling/         本机工具链（MinGW-w64、图标生成器、截图脚本）
+  screenshot.ps1  桌面窗口截图（跑真实应用）
+  mobile-shot.mjs 手机视口截图（无头 Chrome，模拟触屏）
+.vscode/          团队级编辑器配置（插件推荐 / 工作区设置 / 任务 / 调试）
+.editorconfig     编码与换行约定（与 .gitattributes 对齐）
+.prettierrc.json  Prettier 规则（单引号 + 120 列，沿用仓库既有风格）
 .shots/           编号命名的界面验收截图（进仓库）
 ```
 

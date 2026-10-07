@@ -1,0 +1,23 @@
+{
+  // 打开这个仓库时 VS Code 会提示安装这些插件（只提示，不会自动装）。
+  // 分三组：Rust/Tauri、前端、脚本与 CI。装了没配置等于没装，配套配置见同目录其它文件。
+  "recommendations": [
+    // Rust / Tauri
+    "rust-lang.rust-analyzer",
+    "tauri-apps.tauri-vscode",
+    "vadimcn.vscode-lldb",
+    "tamasfe.even-better-toml",
+    "fill-labs.dependi",
+    // 前端（原生 HTML/CSS/ES 模块，无打包器）
+    "esbenp.prettier-vscode",
+    "ecmel.vscode-html-css",
+    // 脚本与 CI
+    "ms-vscode.powershell",
+    "redhat.vscode-yaml",
+    "github.vscode-github-actions",
+    "github.vscode-pull-request-github",
+    "editorconfig.editorconfig",
+    // 界面本身是中文的，语言包一并推荐
+    "ms-ceintl.vscode-language-pack-zh-hans"
+  ]
+}

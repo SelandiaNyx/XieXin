@@ -11,8 +11,14 @@ src-tauri/target/
 # Local environment and editor files
 .env
 .env.*
-.vscode/
 .idea/
+# .vscode：只共享与仓库强相关的团队配置（插件推荐 / 任务 / 调试 / 工作区设置），
+# 个人偏好、snippets、本地历史仍然不入库。
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
 .self-check-data/
 .sc/
 .sm/

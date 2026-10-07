@@ -1,0 +1,27 @@
+# 写心的编码约定。与 .gitattributes 保持一致：
+# 除 PowerShell 脚本外一律 LF（CRLF 会让 CI 的 bash 报 "bash\r: No such file or directory"）。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.rs]
+indent_size = 4
+
+[*.ps1]
+end_of_line = crlf
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+# 二进制资源不做换行与缩进处理
+[*.{png,ico,icns,exe,dll,zip,epub}]
+insert_final_newline = false

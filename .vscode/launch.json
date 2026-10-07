@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // 直接调试构建产物：cargo 由前置任务在 dev.ps1 的环境里跑（含 MinGW 与工作区工具链），
+      // 这样 CodeLLDB 不需要自己找到 cargo。
+      "name": "写心: 调试桌面端 (CodeLLDB)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/src-tauri/target/debug/novel-manager.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["rust"],
+      "preLaunchTask": "写心: 调试构建 (dev.ps1 build)"
+    },
+    {
+      // 用独立数据目录起一份干净的库，调界面时不会碰到真实稿件
+      "name": "写心: 调试桌面端（空数据目录）",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/src-tauri/target/debug/novel-manager.exe",
+      "args": ["--data-dir", "${workspaceFolder}/.debug-data"],
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["rust"],
+      "preLaunchTask": "写心: 调试构建 (dev.ps1 build)"
+    },
+    {
+      // 浏览器里调界面：先跑前置任务起预览服务（内存示例数据），再拉起 Chrome。
+      // 想按手机看就在 DevTools 里切设备模拟，或直接用 .tooling/mobile-shot.mjs 出图。
+      "name": "写心: 浏览器调试界面 (预览服务)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://127.0.0.1:4173/",
+      "webRoot": "${workspaceFolder}/ui",
+      "preLaunchTask": "写心: 界面预览服务 (4173)"
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  // 只放与这个仓库强相关的设置，个人偏好请放用户设置。
+
+  // 换行与空白：与 .gitattributes / .editorconfig 一致
+  "files.eol": "\n",
+  "files.encoding": "utf8",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+
+  // 工作区里的 Rust 工具链不在 PATH 上（dev.ps1 会临时指过去），
+  // 所以这里显式告诉 rust-analyzer：去哪找 rustup/cargo 和 MinGW 链接器。
+  "rust-analyzer.linkedProjects": ["src-tauri/Cargo.toml"],
+  "rust-analyzer.server.extraEnv": {
+    "RUSTUP_HOME": "${workspaceFolder}/.rustup",
+    "CARGO_HOME": "${workspaceFolder}/.cargo",
+    "RUSTUP_TOOLCHAIN": "stable-x86_64-pc-windows-gnu",
+    "PATH": "${workspaceFolder}/.cargo/bin;${workspaceFolder}/.tooling/mingw/w64devkit/bin;${env:PATH}"
+  },
+
+  // 格式化：交给 Prettier（规则见 .prettierrc.json），但不要保存即格式化——
+  // 这个仓库的历史代码没有被 Prettier 全量跑过，避免一次保存产生整篇 diff。
+  "editor.formatOnSave": false,
+  "[javascript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[css]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[html]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[json]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[jsonc]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[rust]": { "editor.defaultFormatter": "rust-lang.rust-analyzer" },
+  "[toml]": { "editor.defaultFormatter": "tamasfe.even-better-toml" },
+  "[powershell]": { "editor.defaultFormatter": "ms-vscode.powershell" },
+  "[markdown]": { "editor.defaultFormatter": "esbenp.prettier-vscode", "editor.wordWrap": "on" },
+
+  // 构建产物与本地工具链不要出现在搜索/文件树/监听里
+  "search.exclude": {
+    "**/.shots": true,
+    "**/src-tauri/target": true,
+    "**/.rustup": true,
+    "**/.cargo": true,
+    "**/.tooling/mingw": true
+  },
+  "files.watcherExclude": {
+    "**/src-tauri/target/**": true,
+    "**/.rustup/**": true,
+    "**/.cargo/**": true,
+    "**/.tooling/mingw/**": true
+  },
+
+  // 仓库里没有 ESLint 配置，别让编辑器提示"未找到配置"
+  "eslint.enable": false
+}
