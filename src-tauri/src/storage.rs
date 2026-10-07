@@ -318,6 +318,8 @@ pub struct WorkspaceState {
     pub storage_bytes: u64,
     /// 该平台有没有原生文件选择器（Android 上没有，界面要藏掉"选择封面图片"这类按钮）
     pub has_native_pickers: bool,
+    /// 稿件目录的位置信息（首次启动要不要让用户选位置）
+    pub location: StorageLocation,
     pub card_kinds: Vec<String>,
 }
 
@@ -424,6 +426,191 @@ pub fn default_data_dir() -> PathBuf {
     base.join(APP_DIR)
 }
 
+/// 全新安装时建议的位置：优先放到「文档」里（用户一眼能找到自己的稿子），
+/// 找不到「文档」就退回平台默认数据目录。
+pub fn suggested_data_dir() -> PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()
+        .map(PathBuf::from);
+    if let Some(home) = home {
+        let docs = home.join("Documents");
+        if docs.is_dir() {
+            return docs.join("写心稿件");
+        }
+    }
+    default_data_dir()
+}
+
+/// 当前位置信息。判定集中在这里（而不是散在命令里），便于测试：
+///
+/// * 记过位置且目录就是它 → 不用问；
+/// * 记过位置但当前用的不是它（目录不可用，退回默认）→ 重新问，并标出 `missing`；
+/// * 从没记过、这个目录里也还没有稿件 → 全新安装，首次启动该问一次；
+/// * 位置由 `--data-dir` / 环境变量指定 → 从来不问（自检、截图、测试都靠这个不被弹窗打断）。
+pub fn location_info(dir: &Path, config_dir: &Path, forced: bool) -> StorageLocation {
+    let record = read_location_record(config_dir);
+    let missing = record
+        .as_ref()
+        .map(|r| Path::new(r.dir.trim()) != dir)
+        .unwrap_or(false);
+    let needs_choice = !forced && (missing || record.is_none()) && !has_manuscripts(dir);
+    StorageLocation {
+        dir: dir.to_string_lossy().to_string(),
+        suggested: suggested_data_dir().to_string_lossy().to_string(),
+        needs_choice,
+        is_forced: forced,
+        missing,
+    }
+}
+
+// ---------------------------------------------------------------- 稿件目录的位置
+
+/// 记住"稿件存在哪"的指针文件。它必须放在**数据目录之外**（数据目录正是要定位的东西），
+/// 所以放进应用配置目录：Windows 上是 `%APPDATA%\com.heartwrite.novelmanager`，
+/// Linux 上是 `~/.config/com.heartwrite.novelmanager`。
+pub const LOCATION_FILE: &str = "storage-location.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocationRecord {
+    pub dir: String,
+    pub changed_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageLocation {
+    /// 当前实际在用的稿件目录
+    pub dir: String,
+    /// 首次启动时建议的位置（界面上的"使用默认位置"）
+    pub suggested: String,
+    /// 该让用户选一次位置了：全新安装，或记住的位置不见了
+    pub needs_choice: bool,
+    /// 位置由 `--data-dir` / 环境变量指定：界面不再提供更改
+    pub is_forced: bool,
+    /// 记住的位置不见了（U 盘拔了、文件夹被删），当前临时退回默认目录
+    pub missing: bool,
+}
+
+/// 记下用户选的稿件目录。传空串表示"忘掉这个选择"，下次启动会重新问。
+pub fn write_location_record(config_dir: &Path, dir: &str) -> Result<(), String> {
+    let record = LocationRecord { dir: dir.to_string(), changed_at: now_ms() };
+    let path = config_dir.join(LOCATION_FILE);
+    if dir.trim().is_empty() {
+        let _ = fs::remove_file(&path);
+        return Ok(());
+    }
+    fs::create_dir_all(config_dir).map_err(|e| format!("无法创建配置目录：{e}"))?;
+    write_json_atomic(&path, &record)
+}
+
+/// 读回记住的位置。文件损坏、内容为空都当作"没记过"。
+pub fn read_location_record(config_dir: &Path) -> Option<LocationRecord> {
+    read_json::<LocationRecord>(&config_dir.join(LOCATION_FILE))
+        .ok()
+        .flatten()
+        .filter(|r| !r.dir.trim().is_empty())
+}
+
+/// 这个目录里已经有写心的稿件了吗（`books.json` 是"用过"的标志，
+/// `settings.json` 不算 —— 空目录被加载一次就会生成它）。
+pub fn has_manuscripts(dir: &Path) -> bool {
+    dir.join("books.json").is_file()
+}
+
+/// 目录里第一样"真正的东西"（忽略 `.` 开头的隐藏文件和 Windows 的两个老面孔）。
+fn first_meaningful_entry(dir: &Path) -> Option<String> {
+    let entries = fs::read_dir(dir).ok()?;
+    for entry in entries.filter_map(|e| e.ok()) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let lower = name.to_ascii_lowercase();
+        if name.starts_with('.') || lower == "desktop.ini" || lower == "thumbs.db" {
+            continue;
+        }
+        return Some(name);
+    }
+    None
+}
+
+/// 换目录前的检查。把这些坑挡在前面，界面就只需要把错误原样显示出来：
+/// 空路径、原地不动、目录互相嵌套、目标里已经有一份稿件、目标是有人家东西的文件夹。
+pub fn validate_new_location(from: &Path, to: &Path) -> Result<(), String> {
+    if to.as_os_str().is_empty() {
+        return Err("没有选择文件夹".into());
+    }
+    if to == from {
+        return Err("这就是当前的位置".into());
+    }
+    // 互相嵌套时"移动"会变成把目录搬进自己里面（或把父目录搬进子目录）
+    if to.starts_with(from) {
+        return Err("不能选当前目录里面的子文件夹".into());
+    }
+    if from.starts_with(to) {
+        return Err("不能选当前目录的上级文件夹".into());
+    }
+    if to.exists() {
+        if looks_like_writing_data(to) {
+            return Err("这个文件夹里已经有一份稿件数据，换一个空的吧".into());
+        }
+        if let Some(name) = first_meaningful_entry(to) {
+            return Err(format!("这个文件夹里还有别的东西（{name}），请选一个空文件夹"));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveReport {
+    /// 真的搬了东西（新位置本来就空着、或旧位置还没建过，都是 false）
+    pub moved: bool,
+    /// 跨盘复制：旧目录里的文件是复制过去的，删不掉时会两处都在
+    pub cross_volume: bool,
+    /// 搬过去的顶层条目数
+    pub entries: usize,
+}
+
+/// 把稿件目录整体搬走。同卷直接改名（快、失败也能原样退回）；
+/// 跨卷先逐个复制，全部成功后再删旧目录；删不掉就让两份都留着（宁可占地方，不能丢稿）。
+pub fn move_data_dir(from: &Path, to: &Path) -> Result<MoveReport, String> {
+    validate_new_location(from, to)?;
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("无法创建 {}：{e}", parent.display()))?;
+    }
+    if !from.exists() {
+        fs::create_dir_all(to).map_err(|e| format!("无法创建 {}：{e}", to.display()))?;
+        return Ok(MoveReport { moved: false, cross_volume: false, entries: 0 });
+    }
+    // 目标还不存在时，整个目录一次改名最干净
+    if !to.exists() && fs::rename(from, to).is_ok() {
+        return Ok(MoveReport { moved: true, cross_volume: false, entries: 0 });
+    }
+    fs::create_dir_all(to).map_err(|e| format!("无法创建 {}：{e}", to.display()))?;
+    let mut entries = 0usize;
+    let mut cross_volume = false;
+    for entry in fs::read_dir(from).map_err(|e| format!("读不到旧目录：{e}"))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let src = entry.path();
+        let dst = to.join(entry.file_name());
+        entries += 1;
+        if fs::rename(&src, &dst).is_ok() {
+            continue;
+        }
+        // 同卷改名失败多半是跨卷：退回复制
+        cross_volume = true;
+        if src.is_dir() {
+            copy_dir_all(&src, &dst).map_err(|e| format!("复制 {} 失败：{e}", src.display()))?;
+        } else {
+            fs::copy(&src, &dst).map_err(|e| format!("复制 {} 失败：{e}", src.display()))?;
+        }
+    }
+    if cross_volume {
+        let _ = fs::remove_dir_all(from);
+    }
+    Ok(MoveReport { moved: true, cross_volume, entries })
+}
+
 /// 应用改名前用过的数据目录名（墨阁 → 写心）。
 const LEGACY_APP_DIRS: [&str; 2] = ["com.moge.novelmanager", "com.heartwrite.novelmanager"];
 
@@ -435,7 +622,12 @@ fn looks_like_writing_data(dir: &Path) -> bool {
 
 /// 首次以新名字启动时，把旧数据目录整体搬过来（只在目标还不存在时执行，避免覆盖）。
 /// 找不到可搬的目录、或搬不动时都只是安静地返回，不影响启动。
+///
+/// 只对默认数据目录生效：用户自己挑的位置旁边不该被我们翻出别的目录搬进来。
 fn try_migrate_legacy_data(root: &Path) {
+    if root.file_name().and_then(|n| n.to_str()) != Some(APP_DIR) {
+        return;
+    }
     if root.exists() || root.as_os_str().is_empty() {
         return;
     }
@@ -1522,6 +1714,110 @@ mod reliability_tests {
         assert!(store.read_book_cover(&book_id).is_none());
         let report = store.verify_book(&book_id).unwrap();
         assert!(report.iter().any(|line| line.contains("封面文件不见了")), "体检没报出缺失的封面：{report:?}");
+    }
+
+    #[test]
+    fn empty_dir_with_settings_is_not_manuscripts() {
+        // 空目录被加载过一次就会生成 settings.json —— 那不算"用户已经有稿件"
+        let ws = Workspace::new();
+        let store = ws.store();
+        assert!(!has_manuscripts(&store.root), "只有 settings.json 时不该认为已有稿件");
+    }
+
+    #[test]
+    fn location_decision_covers_fresh_recorded_missing_and_forced() {
+        let ws = Workspace::new();
+        let config = ws.0.join("config");
+        let data = ws.0.join("data");
+        fs::create_dir_all(&data).unwrap();
+
+        // 全新安装：没记过位置、目录里也没稿件 → 首次启动要问
+        let fresh = location_info(&data, &config, false);
+        assert!(fresh.needs_choice, "全新安装应该让用户选一次位置");
+        assert!(!fresh.is_forced);
+        assert!(!fresh.missing);
+        assert!(!fresh.suggested.is_empty(), "应该给出一个建议位置");
+
+        // 记过位置且正用着 → 不再问
+        write_location_record(&config, &data.to_string_lossy()).unwrap();
+        assert!(!location_info(&data, &config, false).needs_choice);
+
+        // 记的位置不是当前目录（U 盘拔了那种）→ 重新问，并标出 missing
+        let other = ws.0.join("elsewhere");
+        let info = location_info(&other, &config, false);
+        assert!(info.missing && info.needs_choice, "记住的位置不可用时应该重新问");
+
+        // --data-dir 指定 → 从来不问，也不允许界面改
+        let forced = location_info(&other, &config, true);
+        assert!(forced.is_forced && !forced.needs_choice);
+    }
+
+    #[test]
+    fn storage_location_validation_catches_the_dangerous_choices() {
+        let ws = Workspace::new();
+        let base = &ws.0;
+        let current = base.join("current");
+        fs::create_dir_all(&current).unwrap();
+
+        // 原地不动、互相嵌套、空路径都要挡住
+        assert!(validate_new_location(&current, &current).is_err());
+        assert!(validate_new_location(&current, &current.join("inner")).is_err());
+        assert!(validate_new_location(&current, base).is_err());
+        assert!(validate_new_location(&current, Path::new("")).is_err());
+
+        // 空目录可以，还不存在的目录也可以（会自动创建）
+        let empty = base.join("empty");
+        fs::create_dir_all(&empty).unwrap();
+        assert!(validate_new_location(&current, &empty).is_ok());
+        assert!(validate_new_location(&current, &base.join("brand-new")).is_ok());
+
+        // 别人家的文件夹要挡住，错误信息里带上那个文件的名字
+        let busy = base.join("busy");
+        fs::create_dir_all(&busy).unwrap();
+        fs::write(busy.join("taxes.pdf"), b"x").unwrap();
+        let err = validate_new_location(&current, &busy).unwrap_err();
+        assert!(err.contains("taxes.pdf"), "错误信息应该指出冲突的文件：{err}");
+
+        // Windows 的 desktop.ini、以及 . 开头的隐藏文件不算"东西"
+        fs::write(busy.join("desktop.ini"), b"x").unwrap();
+        fs::write(busy.join(".DS_Store"), b"x").unwrap();
+        fs::remove_file(busy.join("taxes.pdf")).unwrap();
+        assert!(validate_new_location(&current, &busy).is_ok());
+
+        // 目标里已经有一份写心数据：搬过去会互相覆盖，直接拒绝
+        let other = base.join("other-data");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("books.json"), b"{}").unwrap();
+        assert!(validate_new_location(&current, &other).is_err());
+    }
+
+    #[test]
+    fn move_data_dir_takes_the_manuscripts_along() {
+        let ws = Workspace::new();
+        // 数据放子目录里，好让"新位置"是它的兄弟目录（互相嵌套会被校验拦掉）
+        let from = ws.0.join("data");
+        let mut store = Store::load(from.clone()).unwrap();
+        let (book_id, chapter) = draft(&mut store);
+        save(&mut store, &book_id, &chapter, "第一章 雪夜", true).unwrap();
+        let card = store
+            .upsert_card(&book_id, Card { kind: "character".into(), title: "沈孤鸿".into(), ..Default::default() })
+            .unwrap();
+
+        let to = ws.0.join("搬到这儿");
+        let report = move_data_dir(&from, &to).unwrap();
+        assert!(report.moved);
+        assert_eq!(report.entries, 0, "整目录改名时不需要逐个条目搬");
+        assert!(!from.exists(), "同卷搬家应该把旧目录挪空");
+
+        // 换根之后稿件、正文、卡片、设置都在
+        let moved = Store::load(to.clone()).unwrap();
+        assert_eq!(moved.root, to);
+        assert!(has_manuscripts(&to));
+        assert_eq!(moved.book(&book_id).unwrap().title, "测试作品");
+        assert_eq!(moved.read_content(&book_id, &chapter).unwrap().content, "第一章 雪夜");
+        let cards = moved.read_cards(&book_id).unwrap();
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].id, card.id);
     }
 
     #[test]

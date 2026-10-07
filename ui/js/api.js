@@ -68,6 +68,7 @@ export const api = {
     call('replace_all', { text, needle, replacement, caseSensitive }),
 
   pickDirectory: (title) => call('pick_directory', { title }),
+  setStorageDir: (path, moveData = true) => call('set_storage_dir', { path, moveData }),
   pickOpenFile: (kind) => call('pick_open_file', { kind }),
   pickSavePath: (defaultName, ext) => call('pick_save_path', { defaultName, ext }),
   suggestFilename: (bookId, options) => call('suggest_filename', { bookId, options }),

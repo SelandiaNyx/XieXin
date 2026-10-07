@@ -371,6 +371,55 @@ fn run_inner(store: &mut Store) -> Result<String, String> {
         fail!("重新加载后回收站记录丢失");
     }
 
+    // ---- 更换稿件目录（保存位置）：整体搬走 -> 校验 -> 再搬回来 ---------
+    let original_root = store.root.clone();
+    let moved_root = original_root.parent().unwrap_or(&original_root).join("smoke-moved");
+    let _ = std::fs::remove_dir_all(&moved_root);
+    let report = crate::storage::move_data_dir(&original_root, &moved_root)?;
+    if !report.moved {
+        fail!("换目录时应当把稿件搬过去");
+    }
+    *store = Store::load(moved_root.clone()).map_err(|e| format!("搬到新目录后加载失败: {e}"))?;
+    let after_move = store.book(&book.id).map_err(|e| e.to_string())?;
+    let moved_chars = after_move.volumes.iter().flat_map(|v| v.chapters.iter()).map(|c| c.char_count).sum::<usize>();
+    log.push(line(
+        "location",
+        format!(
+            "稿件已搬到 {}（跨盘复制={}），书架 {} 本，目录字数合计 {}",
+            moved_root.display(),
+            report.cross_volume,
+            store.registry.books.len(),
+            moved_chars
+        ),
+    ));
+    if !crate::storage::has_manuscripts(&moved_root) {
+        fail!("新位置里没有 books.json，搬家不算成功");
+    }
+    // 逐字比对一篇幸存章节：搬完之后正文必须和搬之前一模一样
+    if store.read_content(&book.id, &survivor)?.content != re_content {
+        fail!("搬完之后正文和搬之前不一致，稿子没完整跟过来");
+    }
+    // 指针文件：写进去能读回来，清空表示"下次重新问"
+    let record_dir = store.root.join("pointer-test");
+    crate::storage::write_location_record(&record_dir, &moved_root.to_string_lossy())?;
+    let remembered = crate::storage::read_location_record(&record_dir).ok_or("指针文件写了读不回来")?;
+    if remembered.dir != moved_root.to_string_lossy() {
+        fail!("指针文件里的路径对不上：{}", remembered.dir);
+    }
+    crate::storage::write_location_record(&record_dir, "")?;
+    if crate::storage::read_location_record(&record_dir).is_some() {
+        fail!("清空之后不该还记着位置");
+    }
+    let _ = std::fs::remove_dir_all(&record_dir);
+
+    // 搬回原处，别给自检模式留下两份数据
+    let back = crate::storage::move_data_dir(&moved_root, &original_root)?;
+    *store = Store::load(original_root.clone()).map_err(|e| format!("搬回原目录后加载失败: {e}"))?;
+    if !back.moved || store.registry.books.len() != books {
+        fail!("搬回原目录后书架数量不对");
+    }
+    log.push(line("location", "已搬回原目录，书架与正文完好"));
+
     log.push(line("result", "全部通过"));
     Ok(log.join("\n"))
 }

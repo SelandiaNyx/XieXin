@@ -113,6 +113,7 @@ pub fn run() {
             app::open_book,
             app::delete_book,
             app::update_book_meta,
+            app::set_storage_dir,
             app::set_book_cover,
             app::clear_book_cover,
             app::book_cover,
@@ -162,12 +163,14 @@ pub fn run() {
         ])
         .setup(move |app| {
             let root = app::storage_dir_for_app(app.handle());
+            let config_dir = app::config_dir_for_app(app.handle());
             let custom_webview_dir = std::env::var("NOVEL_MANAGER_DATA_DIR")
                 .ok()
                 .filter(|s| !s.trim().is_empty())
                 .map(|_| root.join(".webview"));
             let store = storage::Store::load(root).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            app.manage(AppState::new(store));
+            let forced_dir = app::forced_data_dir().is_some();
+            app.manage(AppState::new(store, config_dir, forced_dir));
 
             // 正式启动不注入任何脚本：产品页面里也没有开发代码。
             // 只有显式给出下列开关时才把 ui/js/dev/inject.js 挂进去。

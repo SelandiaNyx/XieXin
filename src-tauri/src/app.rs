@@ -17,13 +17,19 @@ use crate::text::{count_text, format_ms, now_ms, FormatRule, ReplaceReport, Text
 pub struct AppState {
     pub store: Mutex<Store>,
     pub started_at: i64,
+    /// 应用配置目录：记录"稿件存在哪"的指针文件放在这里（不能放在数据目录里）
+    pub config_dir: PathBuf,
+    /// 位置由 `--data-dir` / 环境变量指定：不再问用户，也不允许在界面里改
+    pub forced_dir: bool,
 }
 
 impl AppState {
-    pub fn new(store: Store) -> Self {
+    pub fn new(store: Store, config_dir: PathBuf, forced_dir: bool) -> Self {
         Self {
             store: Mutex::new(store),
             started_at: now_ms(),
+            config_dir,
+            forced_dir,
         }
     }
 }
@@ -88,6 +94,7 @@ pub fn workspace_state(state: State<'_, AppState>) -> Result<WorkspaceState, Str
         storage_dir: store.root.to_string_lossy().to_string(),
         storage_bytes: store.storage_bytes(),
         has_native_pickers: crate::dialog::FileFilter::has_native_pickers(),
+        location: location_info(&store, &state.config_dir, state.forced_dir),
         card_kinds: vec![
             "character".into(),
             "plot".into(),
@@ -95,6 +102,47 @@ pub fn workspace_state(state: State<'_, AppState>) -> Result<WorkspaceState, Str
             "world".into(),
         ],
     })
+}
+
+/// 换稿件目录：先搬文件（可选），再把指针写下来，最后就地换根。
+///
+/// 顺序很讲究：只有文件确实搬成功、新目录也加载得起来，才去覆盖指针文件；
+/// 中途失败时旧位置和指针都原样不动，用户重新选一次即可。
+#[tauri::command]
+pub fn set_storage_dir(
+    state: State<'_, AppState>,
+    path: String,
+    move_data: Option<bool>,
+) -> Result<crate::storage::StorageLocation, String> {
+    if state.forced_dir {
+        return Err("当前目录由启动参数（--data-dir / NOVEL_MANAGER_DATA_DIR）指定，界面里改不了".into());
+    }
+    let mut store = lock(&state)?;
+    let from = store.root.clone();
+    let target = PathBuf::from(path.trim());
+    let report = if move_data.unwrap_or(true) {
+        crate::storage::move_data_dir(&from, &target)?
+    } else {
+        crate::storage::validate_new_location(&from, &target)?;
+        std::fs::create_dir_all(&target).map_err(|e| format!("无法创建 {}：{e}", target.display()))?;
+        // 只切换位置时不搬稿件，但把外观设置带过去，免得用户白调一遍主题和字体
+        let old_settings = from.join("settings.json");
+        let new_settings = target.join("settings.json");
+        if !new_settings.exists() && old_settings.is_file() {
+            let _ = std::fs::copy(&old_settings, &new_settings);
+        }
+        crate::storage::MoveReport { moved: false, cross_volume: false, entries: 0 }
+    };
+    *store = Store::load(target.clone())?;
+    crate::storage::write_location_record(&state.config_dir, &target.to_string_lossy())?;
+    eprintln!(
+        "[写心] 稿件目录已切到 {}（搬动={} 跨盘={} 条目={}）",
+        target.display(),
+        report.moved,
+        report.cross_volume,
+        report.entries
+    );
+    Ok(location_info(&store, &state.config_dir, state.forced_dir))
 }
 
 #[tauri::command]
@@ -897,16 +945,43 @@ pub fn dev_smoke_test() -> Result<String, String> {
 }
 
 pub fn storage_dir_for_app(app: &tauri::AppHandle) -> PathBuf {
-    if let Ok(dir) = std::env::var("NOVEL_MANAGER_DATA_DIR") {
-        if !dir.trim().is_empty() {
-            return PathBuf::from(dir);
-        }
+    if let Some(forced) = forced_data_dir() {
+        return forced;
     }
+    // 用户之前选过位置就照它来；目录不在了（U 盘拔了、被删了）才退回默认目录，
+    // 并在 `workspace_state` 里把 missing 标出来，让界面重新问一次。
+    if let Some(record) = crate::storage::read_location_record(&config_dir_for_app(app)) {
+        let dir = PathBuf::from(record.dir.trim());
+        if dir.is_dir() || std::fs::create_dir_all(&dir).is_ok() {
+            return dir;
+        }
+        eprintln!("[写心] 记住的稿件目录不可用（{}），本次先用默认目录", dir.display());
+    }
+    default_data_dir()
+}
+
+/// 位置是不是被 `--data-dir` / 环境变量强制指定的。
+pub fn forced_data_dir() -> Option<PathBuf> {
+    std::env::var("NOVEL_MANAGER_DATA_DIR")
+        .ok()
+        .filter(|d| !d.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+/// 应用配置目录（存"稿件在哪"的指针）。拿不到就退回默认数据目录，
+/// 此时指针文件会跟数据放在一起，功能不受影响。
+pub fn config_dir_for_app(app: &tauri::AppHandle) -> PathBuf {
     app.path()
-        .app_data_dir()
+        .app_config_dir()
         .ok()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(default_data_dir)
+}
+
+/// 当前位置信息。每次现算：`--data-dir`、指针文件、目录是否存在都可能变化，
+/// 存一份快照反而容易过期。判定逻辑在 storage.rs 里，那里有测试。
+fn location_info(store: &Store, config_dir: &std::path::Path, forced: bool) -> crate::storage::StorageLocation {
+    crate::storage::location_info(&store.root, config_dir, forced)
 }
 
 pub fn timestamp_label(ms: i64) -> String {

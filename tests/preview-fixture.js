@@ -11,6 +11,11 @@
   const statuses = [{ id: 'draft', label: '草稿', color: '#81918b', group: '创作' }, { id: 'revising', label: '修订中', color: '#ae7b38', group: '创作' }, { id: 'final', label: '已定稿', color: '#147d6c', group: '创作' }];
   const versions = [{ id: 'version1', label: '开篇初稿', kind: 'manual', createdAt: now - 86400000, chars: 50 }];
   const empty = new URLSearchParams(location.search).has('empty');
+  // ?location=choose 模拟"全新安装还没选过位置"，?location=missing 模拟"记住的位置不见了"
+  const locationParam = new URLSearchParams(location.search).get('location') || '';
+  let locationState = locationParam
+    ? { dir: 'C:/Users/示例/AppData/Roaming/com.heartwrite.novelmanager', suggested: 'C:/Users/示例/Documents/写心稿件', needsChoice: true, isForced: false, missing: locationParam === 'missing' }
+    : { dir: '界面预览 · 临时示例数据', suggested: 'C:/Users/示例/Documents/写心稿件', needsChoice: false, isForced: false, missing: false };
   const clone = value => JSON.parse(JSON.stringify(value));
   // 96×128 的示例封面（真的 PNG，不是占位符）：截图与回归里能看出"封面图确实渲染了"
   const COVER = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAACACAIAAAB7vvvtAAABl0lEQVR42u3dO07DQBQF0DeIJbAG6FgBWQAKDaInHR0FFbvg01DRxBugIRI9O6CDzQwNSiSCLQ8YyfKcVyUSWOHqnTsmKZL2jh4ickROERE5RY6vB5unKXJsHnx7uv7JKLzO+ld6XqftBZS+nrLr7ITpnN1IQhDQHwYxGzR4QB+r82rjOJ5fIjYQsYOTZVX3QS/P9xGxnUZ7B9XZTQIqDUgH/fqYt0ECQgwxxBBDDDEB6SCjgxBDDDHEEEMMMQEJSAfpIMQQQwwxAQlIB+kgxBBDDDHEEENMQALSQToIMcQQQwwxgxhiAtJBOggxxBCzQQISkA7SQYghhhhiiBnEEBOQDtJBiCGGmA1CDDHEEBOQDtJBiAkIMcQQQwwxxASkg3RQ7w16u5rUN7bMb68RK9PUElDvObxrJvbNLI55p5iAHPP+1aiH2OvidMx/2tnyBrFxE5s1T6O+D0pOMaeYU8yNooB0kLFBiCGGGGKIIVY5sfeLhYA6NyhsUMvnYvuPTef7ONP5XOyn69igwUraOOZtkID+fz4BIVgDKxIeCMUAAAAASUVORK5CYII=';
@@ -19,7 +24,13 @@
     switch (cmd) {
       case 'ui_ready': return 'preview';
       case 'ui_log': console.log(args.message); return;
-      case 'workspace_state': return clone({ settings, registry: { books: empty ? [] : [book] }, storageDir: '界面预览 · 临时示例数据', storageBytes: 24576, hasNativePickers: true });
+      case 'workspace_state': return clone({ settings, registry: { books: empty ? [] : [book] }, storageDir: locationState.dir, storageBytes: 24576, hasNativePickers: true, location: locationState });
+      // 换稿件目录：预览里只记下来（真机上这一步会搬文件 + 写指针 + 换根）
+      case 'set_storage_dir': {
+        locationState = { dir: args.path, suggested: locationState.suggested, needsChoice: false, isForced: false, missing: false };
+        return clone(locationState);
+      }
+      case 'pick_directory': return 'D:/示例/我的稿件';
       case 'chapter_statuses': return clone(statuses);
       case 'list_fonts': return [];
       case 'open_book': return clone({ book, cards, cover: book.coverImage ? COVER : null });

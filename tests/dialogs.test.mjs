@@ -21,6 +21,71 @@ test('书架与资料的封面图片', { skip: support.ok ? false : support.reas
     await withBrowser(async (browser) => {
       const page = await openPage(browser, { url: base, width: 1280, height: 800, dsf: 1, touch: false });
       try {
+        // ---------------------------------------------- 首次启动：问一次稿件存哪里
+        await t.test('全新安装：先问稿件目录，选完继续启动', async () => {
+          const page = await openPage(browser, { url: `${base}?location=choose`, width: 1280, height: 800, dsf: 1, touch: false });
+          try {
+            const dialog = await page.evaluate(`(async () => {
+              await new Promise((r) => setTimeout(r, 900));
+              return {
+                title: document.getElementById('modalTitle').textContent,
+                path: document.querySelector('[data-loc-path]').textContent,
+                hasPick: !!document.querySelector('[data-loc-pick]'),
+                buttons: [...document.querySelectorAll('.modal-foot button')].map((b) => b.textContent.trim()),
+                forced: window.__moge.state.location.isForced,
+              };
+            })()`);
+            assert.equal(dialog.title, '稿件存在哪里？', '首次启动应该先问稿件存在哪里');
+            assert.match(dialog.path, /写心稿件/, `应该给出建议位置：${dialog.path}`);
+            assert.equal(dialog.hasPick, true, '有原生选择器的平台应该能给"选择文件夹…"');
+            assert.deepEqual(dialog.buttons, ['用默认位置', '就用这个文件夹']);
+            assert.equal(dialog.forced, false);
+
+            const picked = await page.evaluate(`(async () => {
+              document.querySelector('[data-loc-pick]').click();
+              await new Promise((r) => setTimeout(r, 700));
+              const shown = document.querySelector('[data-loc-path]').textContent;
+              document.querySelector('.modal-foot [data-role="ok"]').click();
+              await new Promise((r) => setTimeout(r, 1400));
+              return {
+                shown,
+                closed: document.getElementById('overlay').hidden,
+                dir: window.__moge.state.location.dir,
+                needsChoice: window.__moge.state.location.needsChoice,
+                bookLoaded: !!document.querySelector('.chapter-row.active'),
+              };
+            })()`);
+            assert.equal(picked.shown, 'D:/示例/我的稿件', '选完文件夹应该立刻显示新路径');
+            assert.equal(picked.closed, true, '确定后应该关掉弹层并继续启动');
+            assert.equal(picked.dir, 'D:/示例/我的稿件', '位置应该真的切过去了');
+            assert.equal(picked.needsChoice, false, '选过之后不该再问');
+            assert.equal(picked.bookLoaded, true, '选完目录后应该照常打开目录树');
+          } finally {
+            await page.close();
+          }
+        });
+
+        await t.test('记住的位置不见了：重新问一次并说明原因', async () => {
+          const page = await openPage(browser, { url: `${base}?location=missing`, width: 1280, height: 800, dsf: 1, touch: false });
+          try {
+            const seen = await page.evaluate(`(async () => {
+              await new Promise((r) => setTimeout(r, 900));
+              const warning = [...document.querySelectorAll('.modal-body .hint')].map((el) => el.textContent).join(' ');
+              document.querySelector('.modal-foot [data-role="default"]').click();
+              await new Promise((r) => setTimeout(r, 1400));
+              return {
+                warning,
+                title: document.getElementById('modalTitle').textContent,
+                dir: window.__moge.state.location.dir,
+              };
+            })()`);
+            assert.match(seen.warning, /打不开/, '位置不可用时要说明原因');
+            assert.match(seen.dir, /写心稿件/, '点"用默认位置"应该切到建议目录');
+          } finally {
+            await page.close();
+          }
+        });
+
         // ---------------------------------------------- 侧栏徽标 + 书架缩略图
         await t.test('有封面时：侧栏徽标与书架缩略图都用封面图', async () => {
           const emblem = await page.evaluate(`(() => {

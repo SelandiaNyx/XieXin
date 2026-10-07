@@ -20,6 +20,8 @@ export const state = {
   registry: { books: [] },
   storageDir: '',
   storageBytes: 0,
+  /** 稿件目录的位置信息（首次启动要不要让用户选位置、是否被启动参数锁定） */
+  location: null,
   /** 该平台有没有原生文件选择器（Android 没有） */
   hasNativePickers: true,
   book: null,

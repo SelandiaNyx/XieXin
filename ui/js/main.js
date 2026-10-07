@@ -90,6 +90,12 @@ async function boot() {
     toast(`读取工作区失败：${e.message}`, 'err');
   }
 
+  // 全新安装：先让用户定下稿件存在哪里，再往下走（关掉不选也能继续，下次还会问）
+  if (state.location?.needsChoice) {
+    await dialogs.openLocationSetup();
+    await dialogs.reloadWorkspace();
+  }
+
   const lastBook = state.settings.lastBookId;
   const exists = state.registry.books.some((b) => b.id === lastBook);
   if (exists) {
