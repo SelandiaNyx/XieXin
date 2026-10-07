@@ -2,10 +2,11 @@
 <html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>写心 · 小说写作工作台</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="workspace.css" />
+  <link rel="stylesheet" href="mobile.css" />
 </head>
 <body>
   <div id="app" class="app no-anim" data-sidebar="open" data-inspector="open" data-focus="off" data-hasbook="no" data-haschapter="no">
@@ -21,6 +22,7 @@
         <button class="icon-btn" id="snapshotBtn" title="创建快照 · Ctrl+Shift+S" aria-label="创建快照 · Ctrl+Shift+S"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="7" width="16" height="14" rx="2"/><path d="M8 3h8M12 11v6M9 14h6"/></svg></button>
         <button class="icon-btn" id="historyBtn" title="历史版本 · Ctrl+Y" aria-label="历史版本 · Ctrl+Y"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11a9 9 0 1 1 3 8M3 4v7h7M12 7v5l3 2"/></svg></button>
         <button class="mini export-action" id="exportBtn" title="导出 · Ctrl+E"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 15v6h16v-6"/></svg><span>导出</span></button>
+        <button class="icon-btn mobile-only" id="mobileMore" title="更多操作" aria-label="更多操作" aria-haspopup="dialog"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg></button>
         <button class="primary save-action" id="saveBtn" title="保存 · Ctrl+S"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h10V3M7 21v-8h10v8"/></svg><span>保存</span><kbd>Ctrl S</kbd></button>
         <span class="toolbar-divider"></span>
         <button class="icon-btn" id="toggleInspector" title="素材栏 · F10" aria-label="素材栏 · F10"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>

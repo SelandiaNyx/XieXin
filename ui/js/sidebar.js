@@ -2,9 +2,10 @@
 
 import { api } from './api.js';
 import { state, setState, emit, findChapter, statusInfo } from './store.js';
-import { toast, confirmDialog, promptDialog, escapeHtml } from './ui.js';
+import { toast, confirmDialog, promptDialog, escapeHtml, openModal, closeModal } from './ui.js';
 import { bookCharCount, bookChapterCount } from './store.js';
 import { deleteFromBook } from './editor.js';
+import { isTouch } from './viewport.js';
 
 const els = {};
 let dragChapterId = null;
@@ -85,6 +86,7 @@ export function renderToc() {
             <button class="tiny-btn" data-action="move-volume-down" data-id="${vol.id}" title="下移" ${vi === book.volumes.length - 1 ? 'disabled' : ''}>↓</button>
             <button class="tiny-btn" data-action="delete-volume" data-id="${vol.id}" title="删除本卷">✕</button>
           </span>
+          <button class="row-more" data-action="mobile-more" title="更多操作" aria-label="《${escapeHtml(vol.title)}》的更多操作">⋮</button>
         </div>
         <div class="volume-chapters" data-volume-id="${vol.id}">
           ${open ? chapters.map((c) => chapterRow(c, vol)).join('') : ''}
@@ -103,7 +105,7 @@ function chapterRow(c, vol) {
   if (c.versions) info.push(`${c.versions}版`);
   const st = statusInfo(c.status);
   return `
-    <div class="chapter-row${active}" draggable="true" data-action="open-chapter" data-id="${c.id}" data-volume-id="${vol.id}" title="${escapeHtml(c.title)}">
+    <div class="chapter-row${active}" draggable="${isTouch() ? 'false' : 'true'}" data-action="open-chapter" data-id="${c.id}" data-volume-id="${vol.id}" title="${escapeHtml(c.title)}">
       <span class="status-pill ${escapeHtml(c.status || 'draft')}" title="状态：${escapeHtml(st.label)}${st.hint ? '（' + escapeHtml(st.hint) + '）' : ''}" style="background:${escapeHtml(st.color)}"></span>
       <span class="chapter-title">${escapeHtml(c.title)}</span>
       <span class="chapter-count">${info.join(' · ')}</span>
@@ -113,6 +115,7 @@ function chapterRow(c, vol) {
         <button class="tiny-btn" data-action="rename-chapter" data-id="${c.id}" title="重命名">✎</button>
         <button class="tiny-btn" data-action="delete-chapter" data-id="${c.id}" title="删除章节">✕</button>
       </span>
+      <button class="row-more" data-action="mobile-more" title="更多操作" aria-label="《${escapeHtml(c.title)}》的更多操作">⋮</button>
     </div>
     <div class="toc-dropzone" data-zone="before" data-chapter-id="${c.id}"></div>`;
 }
@@ -282,6 +285,62 @@ async function removeVolume(id) {
     renderToc();
     toast('卷已删除', 'ok');
   } catch (e) { toast(e.message, 'err'); }
+}
+
+/**
+ * 「移动到其他卷…」：触屏上没有拖拽，靠这个弹层把章节挪到别的卷。
+ * 位置按"先把本章摘掉之后的列表"计算，因为后端 move_chapter_to 也是先摘再插。
+ */
+export async function moveChapterDialog(chapterId) {
+  const book = state.book;
+  const ch = findChapter(chapterId);
+  if (!book || !ch) return;
+  const from = book.volumes.find((v) => v.chapters.some((c) => c.id === chapterId));
+  if (!from) return;
+  if (book.volumes.length < 2 && from.chapters.length < 2) {
+    toast('只有一卷一章，没有可移动的位置', 'warn');
+    return;
+  }
+  const volumes = book.volumes;
+  openModal({
+    title: `移动《${ch.title}》`,
+    width: 'narrow',
+    body: `
+      <div class="field"><label>目标卷</label>
+        <select id="mvVolume">${volumes
+          .map((v) => `<option value="${v.id}"${v.id === from.id ? ' selected' : ''}>${escapeHtml(v.title)}（${v.chapters.length} 章）</option>`)
+          .join('')}</select>
+      </div>
+      <div class="field"><label>插入位置</label><select id="mvPosition"></select></div>
+      <div class="field"><span class="hint">跨卷移动会保留正文与全部历史版本。</span></div>`,
+    footer: '<button class="mini" data-role="cancel">取消</button><button class="primary" data-role="ok">移动</button>',
+    onMount(bodyEl, footEl) {
+      const volSel = bodyEl.querySelector('#mvVolume');
+      const posSel = bodyEl.querySelector('#mvPosition');
+      const fillPositions = () => {
+        const vol = volumes.find((v) => v.id === volSel.value) || volumes[0];
+        const rest = vol.chapters.filter((c) => c.id !== chapterId);
+        posSel.innerHTML = ['<option value="0">放到最前</option>']
+          .concat(rest.map((c, i) => `<option value="${i + 1}">放到《${escapeHtml(c.title)}》之后</option>`))
+          .join('');
+      };
+      fillPositions();
+      volSel.onchange = fillPositions;
+      footEl.querySelector('[data-role="cancel"]').onclick = () => closeModal();
+      footEl.querySelector('[data-role="ok"]').onclick = async () => {
+        const targetVolumeId = volSel.value;
+        const position = Number(posSel.value || 0);
+        closeModal();
+        try {
+          const next = await api.moveChapterTo(book.id, chapterId, targetVolumeId, position);
+          setState({ book: next });
+          renderToc();
+          const to = next.volumes.find((v) => v.id === targetVolumeId);
+          toast(`已移动到《${to ? to.title : '目标卷'}》`, 'ok');
+        } catch (e) { toast(e.message, 'err'); }
+      };
+    },
+  });
 }
 
 // ------------------------------------------------------------------ 拖拽

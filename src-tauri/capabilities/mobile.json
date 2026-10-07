@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "手机端专用权限：Android/iOS 返回键监听（桌面端不加载本文件）",
+  "platforms": ["android", "iOS"],
+  "windows": ["main"],
+  "permissions": [
+    "mobile-onbackpressed-listener:default"
+  ]
+}

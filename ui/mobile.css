@@ -1,0 +1,308 @@
+/* 写心 · 手机端适配层
+   ------------------------------------------------------------------
+   加载顺序在 styles.css / workspace.css 之后，因此同权重规则以后者为准。
+   全部规则都放在 @media (max-width: 900px) 或 @media (hover: none) 里，
+   ≥901px 且带鼠标的桌面窗口完全不受影响（桌面最小窗口 1040×640）。
+
+   窄屏布局的三条原则：
+   1. 只留一列：目录与素材改为从两侧滑出的抽屉，正文独占屏幕；
+   2. 顶栏只保留「目录 / 章节标题 / 更多 / 保存」，其余动作收进底部菜单；
+   3. 弹层铺满整屏，触控目标放大到 38~44px，并避开刘海与手势条（安全区）。
+   ------------------------------------------------------------------ */
+
+/* 只有手机端才需要出现在布局里的元素（更多按钮等） */
+.mobile-only { display: none !important; }
+
+/* 抽屉遮罩：桌面端不参与布局 */
+.scrim { display: none; }
+
+/* 触屏下的行内操作面板（⋮ 弹出），桌面端用悬停显示按钮，不需要它 */
+.row-more { display: none; }
+
+/* ------------------------------------------------------------ 手机布局 */
+@media (max-width: 900px) {
+  :root {
+    --topbar-h: 56px;
+    --left-width: 0px;
+    --right-width: 0px;
+  }
+
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  html, body { overscroll-behavior: none; }
+  button, input, select, textarea, a { touch-action: manipulation; }
+  .mobile-only { display: inline-flex !important; }
+
+  /* ---------------------------------------------------------- 整体骨架 */
+  .app,
+  .app[data-sidebar="open"], .app[data-sidebar="closed"],
+  .app[data-inspector="open"], .app[data-inspector="closed"],
+  .app[data-sidebar="closed"][data-inspector="closed"],
+  .app[data-focus="on"] {
+    grid-template-rows: var(--topbar-h) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "header" "main";
+    height: 100vh;
+    height: 100dvh;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
+    transition: none;
+    /* 刘海 / 圆角 / 手势条：整体内缩，下面的抽屉与弹层跟着一起让位 */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  /* ---------------------------------------------------------- 顶栏 */
+  .topbar { grid-area: header; padding: 0 8px; gap: 6px; }
+  .brand { width: auto; flex: none; gap: 0; }
+  .brand strong, .brand-caption { display: none; }
+  .brand-mark { width: 30px; height: 30px; border-radius: 8px; }
+  .topbar-left { flex: 1; gap: 6px; }
+  .topbar-right { flex: none; gap: 4px; }
+  .crumb { flex: 1; gap: 6px; overflow: visible; }
+  #crumbVolume, .crumb-sep { display: none; }
+  .chapter-title-input { width: auto; min-width: 0; max-width: none; flex: 1; font-size: 14px; padding: 8px 4px; }
+  .icon-btn { width: 38px; height: 38px; }
+  /* 次要动作收进「更多」，顶栏只留目录 / 标题 / 更多 / 保存 */
+  .topbar-right > .icon-btn:not(#mobileMore) { display: none; }
+  .topbar-right > .toolbar-divider, .topbar .export-action { display: none; }
+  .save-action { width: 42px; height: 42px; min-height: 42px; padding: 0; border-radius: 999px; }
+  .save-action > span, .save-action kbd { display: none; }
+  .save-action .ui-icon { width: 19px; height: 19px; }
+
+  /* ---------------------------------------------------------- 抽屉 */
+  .app .sidebar, .app .inspector {
+    position: absolute;
+    top: var(--topbar-h);
+    bottom: 0;
+    z-index: 40;
+    width: min(87vw, 356px);
+    max-width: 100%;
+    grid-area: auto;
+    visibility: hidden;
+    box-shadow: 0 16px 46px #0d1a1628;
+    transition: transform var(--dur-3) var(--ease-out), visibility 0s linear var(--dur-3);
+  }
+  .app .sidebar { left: 0; transform: translateX(-102%); }
+  .app .inspector { right: 0; transform: translateX(102%); }
+  /* 与桌面端一致：收起（或专注模式）时不参与交互 */
+  .app[data-sidebar="closed"] .sidebar,
+  .app[data-inspector="closed"] .inspector,
+  .app[data-focus="on"] .sidebar,
+  .app[data-focus="on"] .inspector {
+    visibility: hidden;
+    transition: transform var(--dur-3) var(--ease-out), visibility 0s linear var(--dur-3);
+  }
+  .app[data-sidebar="open"]:not([data-focus="on"]) .sidebar,
+  .app[data-inspector="open"]:not([data-focus="on"]) .inspector {
+    transform: none;
+    visibility: visible;
+    transition: transform var(--dur-3) var(--ease-out), visibility 0s;
+  }
+  /* 抽屉内部滚动更跟手 */
+  .toc, .cards { -webkit-overflow-scrolling: touch; }
+
+  .scrim {
+    display: block;
+    position: absolute;
+    top: var(--topbar-h);
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 35;
+    background: #101a18;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-3) var(--ease-out);
+  }
+  .scrim.show { opacity: .42; pointer-events: auto; }
+
+  /* 抽屉里的目录、卡片比桌面更宽松一点，方便点按 */
+  .sidebar-top { padding: 12px 12px 10px; }
+  .sidebar-tools { padding: 0 14px 4px; }
+  .toc { padding: 8px 10px 16px; }
+  .volume-row { padding: 11px 8px; }
+  .chapter-row { padding: 13px 10px 13px 18px; margin: 3px 0; }
+  .daily-goal { margin: 4px 14px 14px; }
+  .sidebar-bottom { padding: 10px 14px 14px; }
+  .bottom-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .chip { min-height: 40px; font-size: 12px; }
+  .inspector-heading { padding: 16px 16px 12px; }
+  .inspector-head, .inspector-search, .cards, .inspector-foot { padding-left: 14px; padding-right: 14px; }
+  .tab { min-height: 38px; font-size: 12.5px; }
+  .card-item { padding: 13px 12px; }
+  .inspector-foot .mini { min-height: 42px; font-size: 11.5px; }
+
+  /* ---------------------------------------------------------- 正文 */
+  .document-toolbar { height: 46px; padding: 0 10px; gap: 8px; }
+  .document-context { gap: 6px; }
+  /* 「正文编辑」这四个字在手机上纯占地方 */
+  .document-context > span:nth-child(2) { display: none; }
+  .status-select { max-width: 108px; font-size: 11px; }
+  .text-action { padding: 8px 6px; font-size: 11.5px; }
+  .text-action .ui-icon { width: 16px; height: 16px; }
+
+  .editor-wrap { padding: 12px 10px 22px; overscroll-behavior: contain; }
+  .paper-caption { margin-bottom: 10px; font-size: 10px; }
+  .editor-page { padding: 20px 16px 34px; min-height: calc(100dvh - 220px); border-radius: 10px; }
+  .manuscript-label { margin-bottom: 14px; }
+  .chapter-title-big { font-size: 20px; padding-bottom: 14px; margin-bottom: 16px; }
+  .editor { min-height: 46vh; }
+  .writing-hint { display: none; }
+  .editor-empty { padding: 18px 16px; gap: 12px; }
+  .editor-empty h3 { font-size: 19px; }
+  .editor-empty p { font-size: 12.5px; }
+  .empty-actions { flex-direction: column; width: 100%; max-width: 260px; gap: 8px; }
+  .empty-actions .primary, .empty-actions .mini { width: 100%; min-height: 42px; }
+  .app[data-haschapter="no"] .editor-page { min-height: max(380px, calc(100dvh - 220px)); }
+
+  .findbar { padding: 8px 10px; gap: 6px; }
+  .findbar input[type="search"], .findbar input:not([type]) { min-width: 0; flex: 1 1 40%; font-size: 14px; }
+  .findbar .inline { font-size: 12px; }
+
+  /* 状态栏：只留保存状态与几个计数器，其余让位 */
+  .statusbar { min-height: 38px; padding: 6px 10px; font-size: 11px; gap: 6px; }
+  .status-left, .status-right { gap: 6px; }
+  #versionInfo, #cursorInfo, .status-left .dot-sep { display: none; }
+  .status-chip { font-size: 10.5px; padding: 5px 8px; }
+  .clock, .session-chip { display: none; }
+
+  /* ---------------------------------------------------------- 弹层：整屏 */
+  .overlay { padding: 0; align-items: stretch; }
+  .modal, .modal.narrow, .modal.wide {
+    width: 100%;
+    max-width: none;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+  .modal-head { padding: 14px 14px calc(12px); padding-top: calc(14px + env(safe-area-inset-top)); }
+  /* 整屏弹层里正文占满中间，底部按钮始终贴在屏幕下沿（拇指够得着） */
+  .modal-body { flex: 1 1 auto; padding: 14px 14px 18px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .modal-foot {
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+    gap: 8px;
+  }
+  .modal-foot button { min-height: 40px; }
+  /* 手机上一行放不下两个输入框，统一竖排 */
+  .form-grid { grid-template-columns: 1fr; gap: 10px; }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .shortcut-grid { grid-template-columns: 1fr; }
+  .diff-view { grid-template-columns: 1fr; }
+  .diff-text { max-height: 32vh; }
+  /* 大纲表列多，手机上收起「概要」列，其余压紧 */
+  .outline-table { font-size: 12px; }
+  .outline-table th, .outline-table td { padding: 8px 6px; }
+  .outline-table th:nth-child(5), .outline-table td:nth-child(5) { display: none; }
+  .pomo-time { font-size: 40px; }
+  .pomo-actions .primary, .pomo-modes .mini { min-height: 42px; }
+  .book-card { padding: 12px; }
+  .book-actions { flex-direction: column; }
+  /* 主题预览在窄屏直接上下堆叠 */
+  .preview-frame { grid-template-columns: 1fr; }
+  .preview-side { border-right: 0; border-bottom: 1px solid var(--line); }
+  .preview-paper { margin-right: 0; padding: 16px 14px; }
+  .preview-sidebar-right { position: static; width: auto; margin-top: 10px; }
+  .pc-field select, .pc-field.pc-font select { min-width: 0; flex: 1; }
+  .preview-controls { gap: 8px; }
+
+  /* 提示条铺满底部 */
+  .toasts {
+    left: 10px;
+    right: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+  .toast { max-width: none; }
+}
+
+/* 横屏手机：顶栏再矮一点，保证正文有足够高度 */
+@media (max-width: 900px) and (max-height: 480px) {
+  :root { --topbar-h: 50px; }
+  .editor-wrap { padding-top: 8px; }
+  .daily-goal { display: none; }
+}
+
+/* ------------------------------------------------------------ 触屏交互 */
+/* 触屏设备没有悬停：改成行内「⋮」弹出操作面板，操作按钮本身放大到可点范围 */
+@media (hover: none), (pointer: coarse) {
+  .app .chapter-row .chapter-actions,
+  .app .volume-row .volume-actions { display: none; }
+  .app .chapter-row .chapter-actions .tiny-btn,
+  .app .volume-row .volume-actions .tiny-btn { width: 32px; height: 32px; font-size: 14px; }
+  .row-more {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    flex: none;
+    margin-left: 2px;
+    border-radius: 8px;
+    color: var(--ink-faint);
+    font-size: 15px;
+    line-height: 1;
+  }
+  .row-more:active { background: var(--panel-2); color: var(--accent); }
+  .tiny-btn { width: 30px; height: 30px; font-size: 14px; }
+  /* 触屏上的长按菜单/双击缩放都不需要 */
+  .chapter-row, .volume-row, .book-switch, .icon-btn, .mini, .chip, .tab,
+  .status-chip, .primary, .bottom-toggle, .text-action, .card-item, .sheet-item {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
+
+/* ------------------------------------------------------------ 抽屉里的操作面板 */
+.sheet { position: fixed; inset: 0; z-index: 60; }
+.sheet-backdrop { position: absolute; inset: 0; background: #101a18; opacity: .42; animation: sheetFade var(--dur-2) var(--ease-out); }
+.sheet-panel {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 78dvh;
+  overflow-y: auto;
+  padding: 8px 12px calc(12px + env(safe-area-inset-bottom));
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -14px 44px #0d1a1626;
+  transform: translateY(100%);
+  transition: transform var(--dur-3) var(--ease-out);
+}
+.sheet.open .sheet-panel { transform: none; }
+.sheet-grip { width: 38px; height: 4px; margin: 2px auto 8px; border-radius: 999px; background: var(--line-strong); flex: none; }
+.sheet-title {
+  padding: 2px 6px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sheet-list { display: flex; flex-direction: column; }
+.sheet-item {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 14.5px;
+  color: var(--ink);
+  text-align: left;
+}
+.sheet-item:active { background: var(--accent-soft); }
+.sheet-item.danger { color: var(--danger); }
+.sheet-item:disabled { color: var(--ink-faint); opacity: .5; }
+@keyframes sheetFade { from { opacity: 0; } to { opacity: 1; } }
+
+/* 桌面窗口里不需要底部面板 */
+@media (min-width: 901px) and (hover: hover) {
+  .sheet { display: none !important; }
+}

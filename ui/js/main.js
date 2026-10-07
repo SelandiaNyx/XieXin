@@ -9,6 +9,8 @@ import {
   updateTodayChars, countLocal, insertText, editorEl, focusEditor, editorValue, renderSessionChip,
 } from './editor.js';
 import { initCards, renderCards } from './cards.js';
+import { initMobile } from './mobile.js';
+import { isMobile } from './viewport.js';
 import * as dialogs from './dialogs.js';
 import * as pomodoro from './pomodoro.js';
 
@@ -45,6 +47,7 @@ async function boot() {
   });
   initEditor();
   initCards();
+  initMobile();
   dialogs.initFindBar();
   bindGlobalUi();
   await bindCloseGuard();
@@ -105,7 +108,8 @@ async function boot() {
   pomodoro.initPomodoro();
   renderSessionChip();
   void dialogs.loadFonts().then(() => { /* 字体列表后台加载 */ });
-  focusEditor();
+  // 手机/平板上不要自动聚焦正文：一开屏就弹输入法会挡住界面
+  if (!isMobile()) focusEditor();
   // 首屏稳定后再开启动效，避免启动瞬间抖一下
   requestAnimationFrame(() => {
     document.getElementById('app').classList.remove('no-anim');

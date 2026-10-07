@@ -44,6 +44,12 @@ encoding_rs = "0.8.41"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.17.2"
 
+# Android/iOS 的返回键默认直接把应用退掉；这个插件把它变成前端事件
+# （mobile-onbackpressed-goback），由 ui/js/mobile.js 分层消费。
+# 只在移动端编译：它自己的实现里桌面分支编不过，桌面端也不需要。
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-mobile-onbackpressed-listener = "2.0.1"
+
 [profile.release]
 codegen-units = 1
 lto = true

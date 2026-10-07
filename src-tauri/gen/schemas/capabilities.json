@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"写心主窗口所需的最小权限集合","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-destroy"]}}
+{"default":{"identifier":"default","description":"写心主窗口所需的最小权限集合","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-destroy"]},"mobile":{"identifier":"mobile","description":"手机端专用权限：Android/iOS 返回键监听（桌面端不加载本文件）","local":true,"windows":["main"],"permissions":["mobile-onbackpressed-listener:default"],"platforms":["android","iOS"]}}
