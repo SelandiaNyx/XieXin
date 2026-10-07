@@ -44,8 +44,6 @@
       case 'version_detail': return { meta: versions[0], content: '雪落下来了。', current: content.c1 };
       case 'list_recent_exports': case 'list_trash': return [];
       case 'verify_book': return [];
-      // 返回键插件：真机上这里会去装 Android 侧的返回回调
-      case 'plugin:mobile-onbackpressed-listener|register_back_event': return null;
       default: throw new Error('此操作需要桌面应用：' + cmd);
     }
   },

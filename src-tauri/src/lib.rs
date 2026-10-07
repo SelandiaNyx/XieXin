@@ -164,14 +164,6 @@ pub fn run() {
             let store = storage::Store::load(root).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             app.manage(AppState::new(store));
 
-            // Android/iOS 的返回键默认会把应用直接退掉。装上这个插件后它变成前端事件
-            // （mobile-onbackpressed-goback），由 ui/js/mobile.js 按
-            // 「行内面板 → 弹层 → 抽屉 → 退出专注/查找 → 关闭窗口」的顺序消费。
-            // 必须在建窗口之前注册：插件的 Android 侧是在 webview load 时装回调的。
-            #[cfg(any(target_os = "android", target_os = "ios"))]
-            app.handle()
-                .plugin(tauri_plugin_mobile_onbackpressed_listener::init())?;
-
             // 正式启动不注入任何脚本：产品页面里也没有开发代码。
             // 只有显式给出下列开关时才把 ui/js/dev/inject.js 挂进去。
             let start_url = std::env::var("NOVEL_MANAGER_START_URL").unwrap_or_default();

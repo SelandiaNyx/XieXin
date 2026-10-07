@@ -274,17 +274,17 @@ function consumeBack() {
 /**
  * 接 Android/iOS 的硬件返回键。
  *
- * 插件把返回键一律转成事件（系统默认的"退出应用"被它吞掉了），所以最后一档
- * 必须自己关窗口，否则用户按返回键会"没反应"。
- * 桌面端、或装了旧包（没有这个插件）时静默跳过，行为保持系统默认。
+ * Tauri 核心自带这个能力（mobile/android 的 AppPlugin）：JS 一旦监听 `back-button`，
+ * 返回键就不再由系统直接退出应用，而是回调到这里；没人监听时才走默认行为。
+ * 所以最后一档必须自己关窗口，否则用户按返回键会"没反应"。
+ * 桌面端不会触发这个事件，也就不用注册。
  */
 async function initBackButton() {
   const tauri = window.__TAURI__;
   if (!/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
-  if (!tauri?.core?.invoke || typeof tauri.core.addPluginListener !== 'function') return;
+  if (!tauri?.core || typeof tauri.core.addPluginListener !== 'function') return;
   try {
-    await tauri.core.invoke('plugin:mobile-onbackpressed-listener|register_back_event');
-    await tauri.core.addPluginListener('mobile-onbackpressed-listener', 'mobile-onbackpressed-goback', consumeBack);
+    await tauri.core.addPluginListener('app', 'back-button', consumeBack);
     log('[back] 返回键监听已就绪');
   } catch (e) {
     log(`[back] 返回键监听未启用：${(e && e.message) || e}`);

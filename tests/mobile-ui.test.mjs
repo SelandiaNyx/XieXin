@@ -168,7 +168,7 @@ test('移动端界面回归', { skip: support.ok ? false : support.reason, timeo
           })`);
 
           const boot = await snap();
-          assert.deepEqual(boot.events, ['mobile-onbackpressed-goback'], '启动时应注册返回键监听');
+          assert.deepEqual(boot.events, ['back-button'], '启动时应监听 Tauri 核心的 back-button 事件');
           assert.equal(boot.closed, false, '刚启动不该关窗口');
 
           // 1) 抽屉：返回键先收抽屉，不退出应用
