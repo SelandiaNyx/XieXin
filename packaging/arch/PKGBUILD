@@ -32,7 +32,7 @@ conflicts=('xiexin')
 options=('!strip')   # 产物已经 strip 过，再 strip 一次没有意义
 
 source=("${pkgname%-bin}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/XieXin-linux-${pkgver}.tar.gz")
-sha256sums=('f5ca381c00b5ce811fa0a690c27e655bc8e6f7ad9bc1414f04845cc9ed43c36a')
+sha256sums=('08dc9f7062d8a3074f5f9833a0df2db92ff35eeba58e6422c2326f0cf015cbaf')
 
 package() {
   local srcdir_name="XieXin-linux-${pkgver}"
