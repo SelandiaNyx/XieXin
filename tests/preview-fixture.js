@@ -11,6 +11,8 @@
   const statuses = [{ id: 'draft', label: '草稿', color: '#81918b', group: '创作' }, { id: 'revising', label: '修订中', color: '#ae7b38', group: '创作' }, { id: 'final', label: '已定稿', color: '#147d6c', group: '创作' }];
   const versions = [{ id: 'version1', label: '开篇初稿', kind: 'manual', createdAt: now - 86400000, chars: 50 }];
   const empty = new URLSearchParams(location.search).has('empty');
+  // ?novolume 模拟"唯一一卷被删掉之后"的书：一卷都没有，用来验证新建章节会自己补一卷
+  if (new URLSearchParams(location.search).has('novolume')) book.volumes = [];
   // ?location=choose 模拟"全新安装还没选过位置"，?location=missing 模拟"记住的位置不见了"
   const locationParam = new URLSearchParams(location.search).get('location') || '';
   let locationState = locationParam
@@ -49,7 +51,20 @@
         if (args.coverColor) book.coverColor = args.coverColor;
         return clone(book);
       }
-      case 'read_chapter': return { content: content[args.chapterId], createdAt: now };
+      case 'read_chapter': return { content: content[args.chapterId] || '', createdAt: now };
+      case 'add_volume': {
+        const vol = { id: `v${book.volumes.length + 1}`, title: `第${book.volumes.length + 1}卷`, expanded: true, chapters: [] };
+        book.volumes.push(vol);
+        return clone(book);
+      }
+      case 'add_chapter': {
+        const vol = book.volumes.find((v) => v.id === args.volumeId);
+        if (!vol) throw new Error('找不到目标卷');
+        const ch = { id: `c${Object.keys(content).length + 1}`, title: `第${vol.chapters.length + 1}章`, status: 'draft', charCount: 0, versions: 0 };
+        vol.chapters.push(ch);
+        content[ch.id] = '';
+        return clone(book);
+      }
       case 'list_versions': return clone(versions);
       case 'save_chapter': content[args.chapterId] = args.content; return { updatedAt: Date.now(), charCount: args.content.length, versions: 3 };
       case 'save_settings': Object.assign(settings, args.settings); return clone(settings);

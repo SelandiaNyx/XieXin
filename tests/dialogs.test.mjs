@@ -86,6 +86,38 @@ test('书架与资料的封面图片', { skip: support.ok ? false : support.reas
           }
         });
 
+        // ---------------------------------------------- 一卷都没有时的新建章节
+        await t.test('一卷都没有时：新建章节会先补一卷，而不是抱怨', async () => {
+          const page = await openPage(browser, { url: `${base}?novolume`, width: 1280, height: 800, dsf: 1, touch: false });
+          try {
+            const before = await page.evaluate(`(() => ({
+              volumes: [...document.querySelectorAll('.volume-row .volume-title')].map((e) => e.textContent),
+            }))()`);
+            assert.deepEqual(before.volumes, [], '前提：这本书一卷都没有（等价于把唯一一卷删掉）');
+
+            const after = await page.evaluate(`(async () => {
+              document.getElementById('addChapter').click();
+              await new Promise((r) => setTimeout(r, 1500));
+              const toasts = [...document.querySelectorAll('.toast')].map((t) => t.textContent);
+              return {
+                volumes: [...document.querySelectorAll('.volume-row .volume-title')].map((e) => e.textContent),
+                chapters: [...document.querySelectorAll('.chapter-row .chapter-title')].map((e) => e.textContent),
+                toasts,
+                title: document.getElementById('chapterTitleBig').value,
+              };
+            })()`);
+            assert.equal(after.volumes.length, 1, '应该自动补上一卷');
+            assert.equal(after.chapters.length, 1, '应该建出第一章并显示在目录里');
+            assert.ok(
+              !after.toasts.some((t) => t.includes('请先新增一卷')),
+              `不该再出现"请先新增一卷"：${after.toasts.join(' | ')}`,
+            );
+            assert.match(after.title, /第1章/, '新建的章节应该直接打开');
+          } finally {
+            await page.close();
+          }
+        });
+
         // ---------------------------------------------- 侧栏徽标 + 书架缩略图
         await t.test('有封面时：侧栏徽标与书架缩略图都用封面图', async () => {
           const emblem = await page.evaluate(`(() => {

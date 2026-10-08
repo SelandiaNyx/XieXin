@@ -234,7 +234,10 @@ if (enabled) {
         const indented = text.split('\n').filter((l) => l.startsWith('\u3000\u3000')).length;
         const total = text.split('\n').filter((l) => l.trim()).length;
         assert(indented >= 3, `缩进行数不足：${indented}/${total}，正文=${JSON.stringify(text.slice(0, 80))}`);
-        return `缩进 ${indented}/${total} 行`;
+        // 章节标题有独立输入框，排版不该再往正文头插一行（手机上尤其碍眼）
+        assert(!text.includes('第一章'), `一键排版不该往正文里塞标题：${JSON.stringify(text.slice(0, 40))}`);
+        assert(text.startsWith('\u3000\u3000'), '排版后第一行应该就是带缩进的正文');
+        return `缩进 ${indented}/${total} 行，且未插入标题`;
       }),
     );
 

@@ -225,6 +225,50 @@ test('移动端界面回归', { skip: support.ok ? false : support.reason, timeo
         }
       });
 
+      // ------------------------------------------------ 手机端的专注模式
+      await t.test('手机端专注模式：收起工具条与状态栏，退出入口在「更多」里', async () => {
+        const page = await openPage(browser, { url: base, width: 390, height: 844, touch: true });
+        try {
+          const before = await page.evaluate(`(() => ({
+            toolbar: getComputedStyle(document.querySelector('.document-toolbar')).display,
+            statusbar: getComputedStyle(document.querySelector('.statusbar')).display,
+            paper: Math.round(document.getElementById('editorPage').getBoundingClientRect().width),
+          }))()`);
+          assert.notEqual(before.toolbar, 'none');
+          assert.notEqual(before.statusbar, 'none');
+
+          const focused = await page.evaluate(`(async () => {
+            document.getElementById('focusBtn').click();
+            await new Promise((r) => setTimeout(r, 700));
+            const wrap = getComputedStyle(document.querySelector('.editor-wrap'));
+            return {
+              toolbar: getComputedStyle(document.querySelector('.document-toolbar')).display,
+              statusbar: getComputedStyle(document.querySelector('.statusbar')).display,
+              paddingLeft: wrap.paddingLeft,
+              paper: Math.round(document.getElementById('editorPage').getBoundingClientRect().width),
+            };
+          })()`);
+          assert.equal(focused.toolbar, 'none', '专注模式应该收起正文工具条，才算真的腾出地方');
+          assert.equal(focused.statusbar, 'none', '专注模式应该收起状态栏');
+          assert.equal(focused.paddingLeft, '10px', '窄屏专注模式不该把稿纸挤窄（桌面那套 max(30px,10vw) 在手机上等于变窄）');
+          assert.ok(focused.paper >= before.paper, `专注模式下稿纸不应变窄：${focused.paper} < ${before.paper}`);
+
+          const exited = await page.evaluate(`(async () => {
+            document.getElementById('mobileMore').click();
+            await new Promise((r) => setTimeout(r, 400));
+            const labels = [...document.querySelectorAll('#sheetList .sheet-item')].map((b) => b.textContent);
+            const item = [...document.querySelectorAll('#sheetList .sheet-item')].find((b) => b.textContent === '退出专注模式');
+            if (item) item.click();
+            await new Promise((r) => setTimeout(r, 700));
+            return { labels, toolbar: getComputedStyle(document.querySelector('.document-toolbar')).display };
+          })()`);
+          assert.ok(exited.labels.includes('退出专注模式'), '手机上没有 F11/Esc，退出入口要出现在「更多」里');
+          assert.notEqual(exited.toolbar, 'none', '退出专注后工具条应该回来');
+        } finally {
+          await page.close();
+        }
+      });
+
       // ------------------------------------------------ 触屏平板
       await t.test('触屏平板 1024×768：仍是三栏，动作走 ⋮，侧栏不被收起', async () => {
         const page = await openPage(browser, { url: base, width: 1024, height: 768, dsf: 1, touch: true });

@@ -218,8 +218,21 @@ export async function createVolume(title = '') {
 
 export async function createChapter(volumeId = '') {
   if (!state.book) { toast('请先创建或选择一本书', 'warn'); return; }
-  const target = volumeId || state.activeVolumeId || (state.book.volumes[0] && state.book.volumes[0].id);
-  if (!target) { toast('请先新增一卷', 'warn'); return; }
+  let target = volumeId || state.activeVolumeId || (state.book.volumes[0] && state.book.volumes[0].id);
+  // activeVolumeId 可能停在已经删掉的卷上；目标卷必须真的还在
+  if (target && !state.book.volumes.some((v) => v.id === target)) target = state.book.volumes[0]?.id || '';
+  // 一卷都没有（比如刚把唯一的卷删了）：先补一卷再建章，别把"新建章节"变成一句抱怨
+  if (!target) {
+    try {
+      const withVolume = await api.addVolume(state.book.id, '');
+      setState({ book: withVolume });
+      renderToc();
+      const added = withVolume.volumes[withVolume.volumes.length - 1];
+      if (!added) { toast('新建卷失败', 'err'); return; }
+      target = added.id;
+      toast(`已自动新建《${added.title}》`, 'ok');
+    } catch (e) { toast(e.message, 'err'); return; }
+  }
   try {
     const book = await api.addChapter(state.book.id, target, '');
     setState({ book });

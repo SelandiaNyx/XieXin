@@ -227,7 +227,13 @@ function handleBottomAction(action, chip) {
     case 'outline': dialogs.openOutline(); break;
     case 'trash': dialogs.openTrash(); break;
     case 'verify': dialogs.runVerify(); break;
-    case 'focus': setState({ focus: !state.focus }); toast(state.focus ? '已进入专注模式（F11 或 Esc 退出）' : '已退出专注模式', 'ok'); break;
+    case 'focus': {
+      setState({ focus: !state.focus });
+      // 手机上没有 F11/Esc，退出方式要说清楚
+      const how = isMobile() ? '点「更多 → 退出专注模式」，或按返回键' : 'F11 或 Esc';
+      toast(state.focus ? `已进入专注模式（${how}退出）` : '已退出专注模式', 'ok');
+      break;
+    }
     case 'pomodoro': pomodoro.openPomodoroDialog(); break;
     case 'session': dialogs.openStats(); break;
     case 'help': dialogs.openHelp(); break;
@@ -239,6 +245,9 @@ function handleBottomAction(action, chip) {
 /**
  * 一键排版：直接生效，不再弹确认框。
  * 排版前的内容会先存成一个历史版本，并放进撤销栈（Ctrl+Z / 状态栏「撤销排版」）。
+ *
+ * 最后一个参数是 ensure_title：**不补标题**。章节标题本来就有独立输入框（章节标题栏 + 稿纸大标题），
+ * 排版再往正文头插一行，等于把同一句话写进两处，导出的稿子里也会多一行。
  */
 async function runOneClickFormat() {
   if (!state.activeChapterId) return;
@@ -247,7 +256,7 @@ async function runOneClickFormat() {
     const before = view.value;
     if (!before.trim()) { toast('本章还没有内容', 'warn'); return false; }
     const report = await api.format(before, state.settings.oneClickFormatRule,
-      document.getElementById('chapterTitleBig').value.trim(), true);
+      document.getElementById('chapterTitleBig').value.trim(), false);
     if (!report.changed) { toast('正文已经是规范格式', 'ok'); return true; }
     if (!await saveChapter({ manualSnapshot: true, silent: true, label: '一键排版前存档' })) return false;
     undoStack.push({ bookId: state.book.id, chapterId: state.activeChapterId, content: before, after: report.content });

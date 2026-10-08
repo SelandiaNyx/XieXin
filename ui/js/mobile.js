@@ -204,7 +204,8 @@ function bindMoreButton() {
       { label: '素材卡片', run: () => clickId('toggleInspector') },
       { label: '章节大纲', run: () => clickChip('outline') },
       { label: '番茄钟', run: () => clickChip('pomodoro') },
-      { label: '专注模式', run: () => clickId('focusBtn') },
+      // 进专注模式后正文工具条会被收起来，所以退出入口留在这里
+      { label: state.focus ? '退出专注模式' : '专注模式', run: () => clickId('focusBtn') },
       { label: '外观与偏好', run: () => clickId('openSettings') },
       { label: '快捷键说明', run: () => clickChip('help') },
     ]);

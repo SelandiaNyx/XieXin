@@ -133,6 +133,12 @@
   .inspector-foot .mini { min-height: 42px; font-size: 11.5px; }
 
   /* ---------------------------------------------------------- 正文 */
+  /* 专注模式在手机上要真的腾地方：收起正文工具条与状态栏，只留顶栏 + 稿纸。
+     桌面端的 focus 规则会把左右两栏收成 0 宽、并把正文左右留白加到 max(30px, 10vw) ——
+     窄屏上左右两栏本来就收起了，那套规则等于把稿纸**变窄**，所以这里改回手机的正常留白。 */
+  .app[data-focus="on"] .document-toolbar,
+  .app[data-focus="on"] .statusbar { display: none; }
+  .app[data-focus="on"] .editor-wrap { padding: 10px 10px 18px; }
   .document-toolbar { height: 46px; padding: 0 10px; gap: 8px; }
   .document-context { gap: 6px; }
   /* 「正文编辑」这四个字在手机上纯占地方 */
