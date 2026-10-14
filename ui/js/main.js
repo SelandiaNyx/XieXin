@@ -20,7 +20,7 @@ let tocChapter = '';
 let tocSaving = false;
 
 /** 前端资源构建标记：改动 ui 后改这里，便于确认应用加载的是最新界面。 */
-const UI_BUILD = 'ui-2026-09-28-studio';
+const UI_BUILD = 'ui-2026-10-13-studio';
 
 window.__moge = {
   openChapter,
@@ -90,8 +90,8 @@ async function boot() {
     toast(`读取工作区失败：${e.message}`, 'err');
   }
 
-  // 全新安装：先让用户定下稿件存在哪里，再往下走（关掉不选也能继续，下次还会问）
-  if (state.location?.needsChoice) {
+  // 全新安装（仅限桌面端有原生目录选择器时）：先让用户定下稿件存在哪里，再往下走
+  if (state.location?.needsChoice && state.hasNativePickers) {
     await dialogs.openLocationSetup();
     await dialogs.reloadWorkspace();
   }
@@ -206,6 +206,12 @@ function bindGlobalUi() {
     event.preventDefault();
     event.returnValue = '';
   });
+  document.addEventListener('visibilitychange', () => {
+    // 手机切后台或锁屏时立刻落盘，避免系统回收后台进程丢稿
+    if (document.visibilityState === 'hidden' && state.dirty) {
+      void flushPendingSave();
+    }
+  });
   window.addEventListener('online', () => toast('网络已连接（写心完全离线运行）', 'ok'));
   void confirmDialog;
   void closeModal;
@@ -274,45 +280,49 @@ async function runOneClickFormat() {
 // and close; save failed → tell the user how to get out instead of refusing forever.
 async function bindCloseGuard() {
   const win = window.__TAURI__?.window?.getCurrentWindow?.();
-  if (!win) return;
-  await win.onCloseRequested(async event => {
-    if (window.__WRITER_CLOSING__) return; // 已经在关，放行
-    event.preventDefault();
+  if (!win || typeof win.onCloseRequested !== 'function') return;
+  try {
+    await win.onCloseRequested(async event => {
+      if (window.__WRITER_CLOSING__) return; // 已经在关，放行
+      event.preventDefault();
 
-    const finish = async (why) => {
-      window.__WRITER_CLOSING__ = true;
-      log(`[close] ${why}`);
-      try {
-        await api.uiLog(`[close] ${why}`);
-      } catch { /* 记不上也要能关 */ }
-      await win.destroy();
-    };
+      const finish = async (why) => {
+        window.__WRITER_CLOSING__ = true;
+        log(`[close] ${why}`);
+        try {
+          await api.uiLog(`[close] ${why}`);
+        } catch { /* 记不上也要能关 */ }
+        await win.destroy();
+      };
 
-    // 正在切章/回滚/导入：等它结束再走同一套保存流程，而不是把这次关闭吞掉
-    const busyDeadline = Date.now() + 15000;
-    while (state.transitioning && Date.now() < busyDeadline) {
-      await new Promise(r => setTimeout(r, 120));
-    }
+      // 正在切章/回滚/导入：等它结束再走同一套保存流程，而不是把这次关闭吞掉
+      const busyDeadline = Date.now() + 15000;
+      while (state.transitioning && Date.now() < busyDeadline) {
+        await new Promise(r => setTimeout(r, 120));
+      }
 
-    if (!state.dirty) return finish('没有未保存改动，直接关闭');
+      if (!state.dirty) return finish('没有未保存改动，直接关闭');
 
-    const ok = await flushPendingSave();
-    if (ok) return finish('保存完成，关闭窗口');
+      const ok = await flushPendingSave();
+      if (ok) return finish('保存完成，关闭窗口');
 
-    // 保存失败：给出选择，不能把用户困在窗口里
-    const force = await confirmDialog(
-      '无法保存，暂时不能关闭',
-      '当前章节写不进磁盘（可能磁盘已满、文件被占用或数据文件损坏）。\n\n' +
-        '· 选择「仍然关闭」会保留磁盘上已有的内容，但这次未保存的改动会丢失；\n' +
-        '· 选择「取消」可以回到窗口，把正文复制到别处再处理。',
-      { okText: '仍然关闭', danger: true },
-    );
-    if (force) {
-      await finish('用户选择放弃未保存改动并关闭');
-    } else {
-      toast('已取消关闭，正文仍在编辑器中', 'warn');
-    }
-  });
+      // 保存失败：给出选择，不能把用户困在窗口里
+      const force = await confirmDialog(
+        '无法保存，暂时不能关闭',
+        '当前章节写不进磁盘（可能磁盘已满、文件被占用或数据文件损坏）。\n\n' +
+          '· 选择「仍然关闭」会保留磁盘上已有的内容，但这次未保存的改动会丢失；\n' +
+          '· 选择「取消」可以回到窗口，把正文复制到别处再处理。',
+        { okText: '仍然关闭', danger: true },
+      );
+      if (force) {
+        await finish('用户选择放弃未保存改动并关闭');
+      } else {
+        toast('已取消关闭，正文仍在编辑器中', 'warn');
+      }
+    });
+  } catch (e) {
+    log(`[close] 关闭守卫未启用：${(e && e.message) || e}`);
+  }
 }
 
 // ------------------------------------------------------------------ 排版撤销

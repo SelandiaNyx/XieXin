@@ -1,722 +1,103 @@
-//! 本地持久化层：书籍 / 卷 / 章 / 人物剧情灵光卡片 / 历史版本 / 设置。
+//! 本地存储层：原子写入、作品注册表、章节内容与版本快照、人物/剧情/灵光卡片、回收站。
 //!
-//! 目录结构（默认位于 `%APPDATA%/com.heartwrite.novelmanager`）：
+//! 磁盘结构（位于 `%APPDATA%/com.heartwrite.novelmanager/` 或 `NOVEL_MANAGER_DATA_DIR`）：
 //! ```text
-//! settings.json                 全局设置（字体、主题、自动保存间隔…）
-//! books.json                     书籍注册表
-//! books/<book_id>/book.json      卷章目录树
-//! books/<book_id>/cards.json     人物 / 剧情 / 灵光卡片
-//! content/<book_id>/<chapter_id>.json   章节正文 + 历史版本快照
+//! settings.json
+//! books.json                        -- 书架索引（也同步保存每本书的目录树）
+//! recent-exports.json
+//! books/<bookId>/book.json          -- 作品完整结构（卷/章元数据）
+//! books/<bookId>/cards.json         -- 人物/剧情/灵光/设定 卡片
+//! content/<bookId>/<chapterId>.json -- 正文 + 历史版本快照
+//! trash/<timestamp>_<name>          -- 软删除的书与章节
+//! exports/                          -- 默认导出目录
 //! ```
 
-use std::collections::BTreeMap;
-use std::fs;
-use std::io::{ErrorKind, Write};
-use std::path::{Path, PathBuf};
+pub mod io;
+pub mod location;
+pub mod models;
 
-use serde::{Deserialize, Serialize};
+pub use io::*;
+pub use location::*;
+pub use models::*;
+
+use std::fs;
+use std::path::PathBuf;
 
 use crate::text::{count_text, now_ms};
 
-pub const APP_DIR: &str = "com.heartwrite.novelmanager";
-pub const MAX_HISTORY_HARD_CAP: usize = 200;
-
-// ---------------------------------------------------------------------------
-// 数据模型
-// ---------------------------------------------------------------------------
-
-fn default_theme() -> String {
-    "light".into()
-}
-
-fn default_font_family() -> String {
-    "霞鹜文楷, 思源宋体, 宋体, Microsoft YaHei, serif".into()
-}
-fn default_font_size() -> f64 {
-    18.0
-}
-fn default_line_height() -> f64 {
-    1.9
-}
-fn default_letter_spacing() -> f64 {
-    0.02
-}
-fn default_autosave_secs() -> u64 {
-    20
-}
-fn default_history_depth() -> usize {
-    30
-}
-fn default_snapshot_char_delta() -> usize {
-    120
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Settings {
-    pub theme: String,
-    pub font_family: String,
-    pub font_size: f64,
-    pub line_height: f64,
-    pub letter_spacing: f64,
-    pub autosave_secs: u64,
-    pub history_depth: usize,
-    /// 与上一版本相比正文变化超过该字数才生成新版本，避免版本爆炸。
-    pub snapshot_char_delta: usize,
-    pub editor_width: u32,
-    pub focus_mode: bool,
-    pub typewriter_sound: bool,
-    pub daily_goal: u32,
-    pub last_book_id: String,
-    pub last_chapter_id: String,
-    pub last_export_dir: String,
-    pub one_click_format_rule: String,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            theme: default_theme(),
-            font_family: default_font_family(),
-            font_size: default_font_size(),
-            line_height: default_line_height(),
-            letter_spacing: default_letter_spacing(),
-            autosave_secs: default_autosave_secs(),
-            history_depth: default_history_depth(),
-            snapshot_char_delta: default_snapshot_char_delta(),
-            editor_width: 860,
-            focus_mode: false,
-            typewriter_sound: false,
-            daily_goal: 3000,
-            last_book_id: String::new(),
-            last_chapter_id: String::new(),
-            last_export_dir: String::new(),
-            one_click_format_rule: "cjk-indent".into(),
-        }
-    }
-}
-
-impl Settings {
-    pub fn normalized(mut self) -> Self {
-        self.history_depth = self.history_depth.clamp(1, MAX_HISTORY_HARD_CAP);
-        self.autosave_secs = self.autosave_secs.clamp(5, 3600);
-        self.font_size = self.font_size.clamp(12.0, 42.0);
-        self.line_height = self.line_height.clamp(1.2, 3.0);
-        self.letter_spacing = self.letter_spacing.clamp(-0.05, 0.30);
-        self.editor_width = self.editor_width.clamp(520, 1600);
-        if self.font_family.trim().is_empty() {
-            self.font_family = default_font_family();
-        }
-        self
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Registry {
-    pub books: Vec<BookMeta>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct BookMeta {
-    pub id: String,
-    pub title: String,
-    pub author: String,
-    pub genre: String,
-    pub summary: String,
-    pub cover_color: String,
-    /// 封面图片的文件名（`books/<id>/cover.<ext>`）；空串表示没设过，界面退回纯色 + 图标。
-    pub cover_image: String,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub volumes: Vec<Volume>,
-    pub settings: Settings,
-}
-
-impl Default for BookMeta {
-    fn default() -> Self {
-        let t = now_ms();
-        Self {
-            id: String::new(),
-            title: "未命名作品".into(),
-            author: String::new(),
-            genre: String::new(),
-            summary: String::new(),
-            cover_color: "#7c6bd6".into(),
-            cover_image: String::new(),
-            created_at: t,
-            updated_at: t,
-            volumes: Vec::new(),
-            settings: Settings::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Volume {
-    pub id: String,
-    pub title: String,
-    pub summary: String,
-    pub expanded: bool,
-    pub created_at: i64,
-    pub chapters: Vec<Chapter>,
-}
-
-impl Default for Volume {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            title: String::new(),
-            summary: String::new(),
-            expanded: true,
-            created_at: now_ms(),
-            chapters: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Chapter {
-    pub id: String,
-    pub title: String,
-    pub summary: String,
-    pub status: String,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub char_count: usize,
-    pub versions: usize,
-}
-
-impl Default for Chapter {
-    fn default() -> Self {
-        let t = now_ms();
-        Self {
-            id: String::new(),
-            title: String::new(),
-            summary: String::new(),
-            status: "draft".into(),
-            created_at: t,
-            updated_at: t,
-            char_count: 0,
-            versions: 0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Card {
-    pub id: String,
-    pub kind: String,
-    pub title: String,
-    pub content: String,
-    pub tags: Vec<String>,
-    pub color: String,
-    pub pinned: bool,
-    pub created_at: i64,
-    pub updated_at: i64,
-    /// 人物卡专用：身份 / 阵营 / 外貌 / 目标等自由字段。
-    pub fields: BTreeMap<String, String>,
-}
-
-impl Default for Card {
-    fn default() -> Self {
-        let t = now_ms();
-        Self {
-            id: String::new(),
-            kind: "character".into(),
-            title: String::new(),
-            content: String::new(),
-            tags: Vec::new(),
-            color: "#8ab4f8".into(),
-            pinned: false,
-            created_at: t,
-            updated_at: t,
-            fields: BTreeMap::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VersionMeta {
-    pub id: String,
-    pub created_at: i64,
-    /// auto | manual | restore | import
-    pub kind: String,
-    pub label: String,
-    pub chars: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Version {
-    pub id: String,
-    pub created_at: i64,
-    pub kind: String,
-    pub label: String,
-    pub chars: usize,
-    pub content: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct ChapterContent {
-    pub chapter_id: String,
-    pub content: String,
-    pub updated_at: i64,
-    #[serde(default)]
-    pub versions: Vec<Version>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SaveResult {
-    pub chapter_id: String,
-    pub char_count: usize,
-    pub words: usize,
-    pub cjk: usize,
-    pub chars_with_space: usize,
-    pub created_version: bool,
-    pub version_id: String,
-    pub versions: usize,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BookStats {
-    pub char_count: usize,
-    pub words: usize,
-    pub cjk: usize,
-    pub chapters: usize,
-    pub volumes: usize,
-    pub cards: usize,
-    pub versions: usize,
-    pub today_chars: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BookPayload {
-    pub book: BookMeta,
-    pub cards: Vec<Card>,
-    pub storage_dir: String,
-    /// 封面（data URL，可直接放进 <img src>）；没设过是 None。
-    pub cover: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceState {
-    pub settings: Settings,
-    pub registry: Registry,
-    pub storage_dir: String,
-    pub storage_bytes: u64,
-    /// 该平台有没有原生文件选择器（Android 上没有，界面要藏掉"选择封面图片"这类按钮）
-    pub has_native_pickers: bool,
-    /// 稿件目录的位置信息（首次启动要不要让用户选位置）
-    pub location: StorageLocation,
-    pub card_kinds: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TrashEntry {
-    pub name: String,
-    pub path: String,
-    pub size: u64,
-    pub deleted_at: i64,
-}
-
-/// 全书搜索的一条命中（片段是原样文本，前端负责转义）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SearchHit {
-    pub chapter_id: String,
-    pub chapter_title: String,
-    pub volume_title: String,
-    pub count: usize,
-    pub head: String,
-    pub hit: String,
-    pub tail: String,
-}
-
-// ---------------------------------------------------------------------------
-// 存储引擎
-// ---------------------------------------------------------------------------
-
+/// 应用核心状态：管理磁盘根目录、设置与书架注册表。
 pub struct Store {
     pub root: PathBuf,
-    pub content_dir: PathBuf,
-    pub registry: Registry,
     pub settings: Settings,
+    pub registry: Registry,
+    /// 本进程累计完成了多少次保存，用来触发"每隔 N 次顺手留一份结构快照"。
     pub save_count: u64,
 }
 
-fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>, String> {
-    let raw = match fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("读取失败 {}: {e}。原文件未修改。", path.display())),
-    };
-    serde_json::from_str(&raw).map(Some)
-        .map_err(|e| format!("数据文件损坏 {}: {e}。请先备份并检查该文件，原文件未修改。", path.display()))
-}
-
-fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("创建目录失败 {}: {e}", parent.display()))?;
-    }
-    let body = serde_json::to_string_pretty(value).map_err(|e| format!("序列化失败: {e}"))?;
-    let tmp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)
-        .map_err(|e| format!("创建临时文件失败 {}: {e}", tmp.display()))?;
-    file.write_all(body.as_bytes()).and_then(|_| file.sync_all())
-        .map_err(|e| format!("写入失败 {}: {e}。原文件保留。", tmp.display()))?;
-    drop(file);
-    // 同目录直接替换，绝不先删旧文件；Windows 的 fs::rename 使用替换语义。
-    fs::rename(&tmp, path).map_err(|e| format!(
-        "替换文件失败 {}: {e}。原文件保留，新内容位于 {}。", path.display(), tmp.display()))?;
-    Ok(())
-}
-
-fn dir_size(path: &Path) -> u64 {
-    walkdir::WalkDir::new(path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter_map(|e| e.metadata().ok())
-        .map(|m| m.len())
-        .sum()
-}
-
-pub fn sanitize_filename(name: &str, fallback: &str) -> String {
-    let mut out = String::new();
-    for ch in name.chars() {
-        if matches!(ch, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\n' | '\r' | '\t') {
-            out.push('_');
-        } else {
-            out.push(ch);
-        }
-    }
-    let trimmed = out.trim().trim_end_matches('.').to_string();
-    if trimmed.is_empty() {
-        fallback.to_string()
-    } else {
-        trimmed.chars().take(80).collect()
-    }
-}
-
-pub fn default_data_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("NOVEL_MANAGER_DATA_DIR") {
-        if !dir.trim().is_empty() {
-            return PathBuf::from(dir);
-        }
-    }
-    let base = std::env::var("APPDATA")
-        .map(PathBuf::from)
-        .ok()
-        .filter(|p| p.is_dir())
-        .or_else(|| std::env::var("HOME").map(PathBuf::from).ok())
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join(APP_DIR)
-}
-
-/// 全新安装时建议的位置：优先放到「文档」里（用户一眼能找到自己的稿子），
-/// 找不到「文档」就退回平台默认数据目录。
-pub fn suggested_data_dir() -> PathBuf {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .ok()
-        .map(PathBuf::from);
-    if let Some(home) = home {
-        let docs = home.join("Documents");
-        if docs.is_dir() {
-            return docs.join("写心稿件");
-        }
-    }
-    default_data_dir()
-}
-
-/// 当前位置信息。判定集中在这里（而不是散在命令里），便于测试：
-///
-/// * 记过位置且目录就是它 → 不用问；
-/// * 记过位置但当前用的不是它（目录不可用，退回默认）→ 重新问，并标出 `missing`；
-/// * 从没记过、这个目录里也还没有稿件 → 全新安装，首次启动该问一次；
-/// * 位置由 `--data-dir` / 环境变量指定 → 从来不问（自检、截图、测试都靠这个不被弹窗打断）。
-pub fn location_info(dir: &Path, config_dir: &Path, forced: bool) -> StorageLocation {
-    let record = read_location_record(config_dir);
-    let missing = record
-        .as_ref()
-        .map(|r| Path::new(r.dir.trim()) != dir)
-        .unwrap_or(false);
-    let needs_choice = !forced && (missing || record.is_none()) && !has_manuscripts(dir);
-    StorageLocation {
-        dir: dir.to_string_lossy().to_string(),
-        suggested: suggested_data_dir().to_string_lossy().to_string(),
-        needs_choice,
-        is_forced: forced,
-        missing,
-    }
-}
-
-// ---------------------------------------------------------------- 稿件目录的位置
-
-/// 记住"稿件存在哪"的指针文件。它必须放在**数据目录之外**（数据目录正是要定位的东西），
-/// 所以放进应用配置目录：Windows 上是 `%APPDATA%\com.heartwrite.novelmanager`，
-/// Linux 上是 `~/.config/com.heartwrite.novelmanager`。
-pub const LOCATION_FILE: &str = "storage-location.json";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LocationRecord {
-    pub dir: String,
-    pub changed_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StorageLocation {
-    /// 当前实际在用的稿件目录
-    pub dir: String,
-    /// 首次启动时建议的位置（界面上的"使用默认位置"）
-    pub suggested: String,
-    /// 该让用户选一次位置了：全新安装，或记住的位置不见了
-    pub needs_choice: bool,
-    /// 位置由 `--data-dir` / 环境变量指定：界面不再提供更改
-    pub is_forced: bool,
-    /// 记住的位置不见了（U 盘拔了、文件夹被删），当前临时退回默认目录
-    pub missing: bool,
-}
-
-/// 记下用户选的稿件目录。传空串表示"忘掉这个选择"，下次启动会重新问。
-pub fn write_location_record(config_dir: &Path, dir: &str) -> Result<(), String> {
-    let record = LocationRecord { dir: dir.to_string(), changed_at: now_ms() };
-    let path = config_dir.join(LOCATION_FILE);
-    if dir.trim().is_empty() {
-        let _ = fs::remove_file(&path);
-        return Ok(());
-    }
-    fs::create_dir_all(config_dir).map_err(|e| format!("无法创建配置目录：{e}"))?;
-    write_json_atomic(&path, &record)
-}
-
-/// 读回记住的位置。文件损坏、内容为空都当作"没记过"。
-pub fn read_location_record(config_dir: &Path) -> Option<LocationRecord> {
-    read_json::<LocationRecord>(&config_dir.join(LOCATION_FILE))
-        .ok()
-        .flatten()
-        .filter(|r| !r.dir.trim().is_empty())
-}
-
-/// 这个目录里已经有写心的稿件了吗（`books.json` 是"用过"的标志，
-/// `settings.json` 不算 —— 空目录被加载一次就会生成它）。
-pub fn has_manuscripts(dir: &Path) -> bool {
-    dir.join("books.json").is_file()
-}
-
-/// 目录里第一样"真正的东西"（忽略 `.` 开头的隐藏文件和 Windows 的两个老面孔）。
-fn first_meaningful_entry(dir: &Path) -> Option<String> {
-    let entries = fs::read_dir(dir).ok()?;
-    for entry in entries.filter_map(|e| e.ok()) {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let lower = name.to_ascii_lowercase();
-        if name.starts_with('.') || lower == "desktop.ini" || lower == "thumbs.db" {
-            continue;
-        }
-        return Some(name);
-    }
-    None
-}
-
-/// 换目录前的检查。把这些坑挡在前面，界面就只需要把错误原样显示出来：
-/// 空路径、原地不动、目录互相嵌套、目标里已经有一份稿件、目标是有人家东西的文件夹。
-pub fn validate_new_location(from: &Path, to: &Path) -> Result<(), String> {
-    if to.as_os_str().is_empty() {
-        return Err("没有选择文件夹".into());
-    }
-    if to == from {
-        return Err("这就是当前的位置".into());
-    }
-    // 互相嵌套时"移动"会变成把目录搬进自己里面（或把父目录搬进子目录）
-    if to.starts_with(from) {
-        return Err("不能选当前目录里面的子文件夹".into());
-    }
-    if from.starts_with(to) {
-        return Err("不能选当前目录的上级文件夹".into());
-    }
-    if to.exists() {
-        if looks_like_writing_data(to) {
-            return Err("这个文件夹里已经有一份稿件数据，换一个空的吧".into());
-        }
-        if let Some(name) = first_meaningful_entry(to) {
-            return Err(format!("这个文件夹里还有别的东西（{name}），请选一个空文件夹"));
-        }
-    }
-    Ok(())
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MoveReport {
-    /// 真的搬了东西（新位置本来就空着、或旧位置还没建过，都是 false）
-    pub moved: bool,
-    /// 跨盘复制：旧目录里的文件是复制过去的，删不掉时会两处都在
-    pub cross_volume: bool,
-    /// 搬过去的顶层条目数
-    pub entries: usize,
-}
-
-/// 把稿件目录整体搬走。同卷直接改名（快、失败也能原样退回）；
-/// 跨卷先逐个复制，全部成功后再删旧目录；删不掉就让两份都留着（宁可占地方，不能丢稿）。
-pub fn move_data_dir(from: &Path, to: &Path) -> Result<MoveReport, String> {
-    validate_new_location(from, to)?;
-    if let Some(parent) = to.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("无法创建 {}：{e}", parent.display()))?;
-    }
-    if !from.exists() {
-        fs::create_dir_all(to).map_err(|e| format!("无法创建 {}：{e}", to.display()))?;
-        return Ok(MoveReport { moved: false, cross_volume: false, entries: 0 });
-    }
-    // 目标还不存在时，整个目录一次改名最干净
-    if !to.exists() && fs::rename(from, to).is_ok() {
-        return Ok(MoveReport { moved: true, cross_volume: false, entries: 0 });
-    }
-    fs::create_dir_all(to).map_err(|e| format!("无法创建 {}：{e}", to.display()))?;
-    let mut entries = 0usize;
-    let mut cross_volume = false;
-    for entry in fs::read_dir(from).map_err(|e| format!("读不到旧目录：{e}"))? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let src = entry.path();
-        let dst = to.join(entry.file_name());
-        entries += 1;
-        if fs::rename(&src, &dst).is_ok() {
-            continue;
-        }
-        // 同卷改名失败多半是跨卷：退回复制
-        cross_volume = true;
-        if src.is_dir() {
-            copy_dir_all(&src, &dst).map_err(|e| format!("复制 {} 失败：{e}", src.display()))?;
-        } else {
-            fs::copy(&src, &dst).map_err(|e| format!("复制 {} 失败：{e}", src.display()))?;
-        }
-    }
-    if cross_volume {
-        let _ = fs::remove_dir_all(from);
-    }
-    Ok(MoveReport { moved: true, cross_volume, entries })
-}
-
-/// 应用改名前用过的数据目录名（墨阁 → 写心）。
-const LEGACY_APP_DIRS: [&str; 2] = ["com.moge.novelmanager", "com.heartwrite.novelmanager"];
-
-fn looks_like_writing_data(dir: &Path) -> bool {
-    dir.join("books.json").is_file()
-        || dir.join("settings.json").is_file()
-        || dir.join("content").is_dir()
-}
-
-/// 首次以新名字启动时，把旧数据目录整体搬过来（只在目标还不存在时执行，避免覆盖）。
-/// 找不到可搬的目录、或搬不动时都只是安静地返回，不影响启动。
-///
-/// 只对默认数据目录生效：用户自己挑的位置旁边不该被我们翻出别的目录搬进来。
-fn try_migrate_legacy_data(root: &Path) {
-    if root.file_name().and_then(|n| n.to_str()) != Some(APP_DIR) {
-        return;
-    }
-    if root.exists() || root.as_os_str().is_empty() {
-        return;
-    }
-    let Some(parent) = root.parent() else { return };
-    let target_name = root.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-    for legacy_name in LEGACY_APP_DIRS {
-        if legacy_name == target_name {
-            continue;
-        }
-        let legacy = parent.join(legacy_name);
-        if !looks_like_writing_data(&legacy) {
-            continue;
-        }
-        // 先在同一卷内改名（快、原子）；跨卷时退回递归复制，两个目录都不删。
-        let moved = fs::rename(&legacy, root).is_ok();
-        if !moved && copy_dir_all(&legacy, root).is_err() {
-            let _ = fs::remove_dir_all(root);
-            continue;
-        }
-        eprintln!(
-            "[写心] 已把原「{}」的稿件迁移到「{}」{}",
-            legacy_name,
-            target_name,
-            if moved { "" } else { "（跨盘复制，旧目录请自行确认后删除）" }
-        );
-        return;
-    }
-}
-
-fn copy_dir_all(from: &Path, to: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(to)?;
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir_all(&entry.path(), &target)?;
-        } else {
-            fs::copy(entry.path(), target)?;
-        }
-    }
-    Ok(())
-}
+/// 每完成多少次保存就给当前书的 `book.json` 留一份滚动备份。
+const BACKUP_EVERY_SAVES: u64 = 15;
+/// 每本书最多留几份滚动备份（超出就把最老的那份删掉）。
+const BACKUP_KEEP_PER_BOOK: usize = 5;
 
 impl Store {
     pub fn load(root: PathBuf) -> Result<Self, String> {
-        // 改名前的老用户：把稿件搬过来，再继续正常加载
-        try_migrate_legacy_data(&root);
-        fs::create_dir_all(&root).map_err(|e| format!("无法创建数据目录 {}: {e}", root.display()))?;
-        let content_dir = root.join("content");
-        fs::create_dir_all(&content_dir).map_err(|e| e.to_string())?;
-        fs::create_dir_all(root.join("books")).map_err(|e| e.to_string())?;
-        fs::create_dir_all(root.join("exports")).map_err(|e| e.to_string())?;
-        fs::create_dir_all(root.join("trash")).map_err(|e| e.to_string())?;
+        for sub in ["books", "content", "trash", "exports", "backups"] {
+            fs::create_dir_all(root.join(sub))
+                .map_err(|e| format!("无法初始化数据目录 {}: {e}", root.display()))?;
+        }
+        let settings_path = root.join("settings.json");
+        let settings: Settings = read_json(&settings_path)?.unwrap_or_default();
+        if !settings_path.exists() {
+            let _ = write_json_atomic(&settings_path, &settings);
+        }
+        let registry_path = root.join("books.json");
+        let registry: Registry = read_json(&registry_path)?.unwrap_or_default();
 
-        let mut settings: Settings = read_json(&root.join("settings.json"))?.unwrap_or_default();
-        settings = settings.normalized();
-        let registry: Registry = read_json(&root.join("books.json"))?.unwrap_or_default();
-
-        let mut store = Store {
+        let mut store = Self {
             root,
-            content_dir,
-            registry,
             settings,
+            registry,
             save_count: 0,
         };
-        if let Some(first) = store.registry.books.first().map(|b| b.id.clone()) {
-            if store.settings.last_book_id.is_empty() {
-                store.settings.last_book_id = first;
-            }
-        }
-        store.save_settings()?;
-        // 老数据的章节状态迁移到新状态集
-        let migrated = store.migrate_statuses()?;
-        if migrated > 0 {
-            eprintln!("[写心] 已迁移 {migrated} 个章节状态到新状态集");
-        }
+        store.reconcile()?;
         Ok(store)
     }
 
-    // -- 通用 ---------------------------------------------------------------
+    /// 每次启动把 `books/<id>/book.json` 里的最新目录树同步回 `books.json`，
+    /// 防止某一次退出只写了单本文件而索引滞后。
+    pub fn reconcile(&mut self) -> Result<(), String> {
+        let mut changed = false;
+        let books_dir = self.root.join("books");
+        for slot in self.registry.books.iter_mut() {
+            let book_file = books_dir.join(&slot.id).join("book.json");
+            match read_json::<BookMeta>(&book_file)? {
+                Some(fresh) => *slot = fresh,
+                None => {
+                    write_json_atomic(&book_file, slot)?;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.save_registry()?;
+        }
+        Ok(())
+    }
 
-    pub fn book_path(&self, id: &str) -> PathBuf {
-        self.root.join("books").join(id).join("book.json")
+    pub fn book_dir(&self, book_id: &str) -> PathBuf {
+        self.root.join("books").join(book_id)
     }
-    pub fn cards_path(&self, id: &str) -> PathBuf {
-        self.root.join("books").join(id).join("cards.json")
+
+    pub fn content_dir(&self, book_id: &str) -> PathBuf {
+        self.root.join("content").join(book_id)
     }
+
     pub fn chapter_path(&self, book_id: &str, chapter_id: &str) -> PathBuf {
-        self.content_dir.join(book_id).join(format!("{chapter_id}.json"))
+        self.content_dir(book_id).join(format!("{chapter_id}.json"))
+    }
+
+    pub fn cards_path(&self, book_id: &str) -> PathBuf {
+        self.book_dir(book_id).join("cards.json")
     }
 
     pub fn save_settings(&self) -> Result<(), String> {
@@ -728,175 +109,585 @@ impl Store {
     }
 
     pub fn save_book(&self, book: &BookMeta) -> Result<(), String> {
-        let mut book = book.clone();
-        book.settings = book.settings.clone().normalized();
-        write_json_atomic(&self.book_path(&book.id), &book)
+        write_json_atomic(&self.book_dir(&book.id).join("book.json"), book)
     }
 
-    pub fn book(&self, id: &str) -> Result<BookMeta, String> {
-        read_json(&self.book_path(id))?.ok_or_else(|| format!("找不到书籍 {id}"))
-    }
-
-    pub fn book_mut<'a>(&'a mut self, id: &str) -> Result<&'a mut BookMeta, String> {
-        self.registry
-            .books
-            .iter_mut()
-            .find(|b| b.id == id)
-            .ok_or_else(|| format!("找不到书籍 {id}"))
-    }
-
-    pub fn require_book(&self, id: &str) -> Result<&BookMeta, String> {
+    pub fn book(&self, book_id: &str) -> Result<BookMeta, String> {
         self.registry
             .books
             .iter()
-            .find(|b| b.id == id)
-            .ok_or_else(|| format!("找不到书籍 {id}"))
+            .find(|b| b.id == book_id)
+            .cloned()
+            .ok_or_else(|| format!("找不到作品 {book_id}"))
     }
 
-    /// 卷 / 章结构改动后统一落盘：内存注册表、book.json、books.json 三者保持一致。
-    fn persist_structure(&mut self, book_id: &str, book: BookMeta) -> Result<(), String> {
-        if let Some(slot) = self.registry.books.iter_mut().find(|b| b.id == book_id) {
-            *slot = book.clone();
-        }
-        self.save_book(&book)?;
-        self.save_registry()
+    pub fn book_mut(&mut self, book_id: &str) -> Result<&mut BookMeta, String> {
+        self.registry
+            .books
+            .iter_mut()
+            .find(|b| b.id == book_id)
+            .ok_or_else(|| format!("找不到作品 {book_id}"))
     }
 
-    /// 旧版本用过的章节状态，迁移到新的状态集（草稿/初稿/修订中/已定稿/待发布/已发布/待返修）。
-    pub fn migrate_statuses(&mut self) -> Result<usize, String> {
-        let mut migrated = 0usize;
-        let mut changed_books: Vec<BookMeta> = Vec::new();
-        for book in self.registry.books.iter_mut() {
-            let mut touched = false;
-            for vol in book.volumes.iter_mut() {
-                for ch in vol.chapters.iter_mut() {
-                    let mapped = match ch.status.as_str() {
-                        "done" | "locked" | "complete" | "completed" => Some("final"),
-                        "drafting" | "" => Some("draft"),
-                        "edit" | "editing" | "revision" => Some("revising"),
-                        _ => None,
-                    };
-                    if let Some(new_status) = mapped {
-                        if ch.status != new_status {
-                            ch.status = new_status.to_string();
-                            migrated += 1;
-                            touched = true;
-                        }
-                    }
-                }
-            }
-            if touched {
-                changed_books.push(book.clone());
-            }
-        }
-        for book in &changed_books {
-            self.save_book(book)?;
-        }
-        if !changed_books.is_empty() {
-            self.save_registry()?;
-        }
-        Ok(migrated)
+    /// 持久化某本书的结构变更（同时写 `books/<id>/book.json` 与 `books.json`）。
+    /// 每累计 `BACKUP_EVERY_SAVES` 次保存，顺手留一份结构快照（失败不影响主流程）。
+    pub fn persist_structure(&self, book_id: &str, snapshot: BookMeta) -> Result<(), String> {
+        self.save_book(&snapshot)?;
+        self.save_registry()?;
+        let _ = self.write_backup_if_due(&snapshot);
+        let _ = book_id;
+        Ok(())
     }
 
-    pub fn read_content(&self, book_id: &str, chapter_id: &str) -> Result<ChapterContent, String> {
-        let chapter = self.require_book(book_id)?.volumes.iter()
-            .flat_map(|v| &v.chapters).find(|c| c.id == chapter_id)
-            .ok_or_else(|| format!("找不到章节 {chapter_id}"))?;
-        let path = self.chapter_path(book_id, chapter_id);
-        let stored = read_json(&path)?;
-        if stored.is_none() && (chapter.char_count > 0 || chapter.versions > 0) {
-            return Err(format!("章节文件缺失 {}。已停止读取和覆盖，请检查备份。", path.display()));
+    /// 给当前书的目录结构留一份带时间戳的快照，只留最近 `BACKUP_KEEP_PER_BOOK` 份。
+    /// 只备份 `BookMeta`（几 KB），不复制正文 —— 正文每章自带多达 200 个历史版本。
+    fn write_backup_if_due(&self, book: &BookMeta) -> Result<(), String> {
+        if self.save_count == 0 || self.save_count % BACKUP_EVERY_SAVES != 0 {
+            return Ok(());
         }
-        let mut c: ChapterContent = stored.unwrap_or_default();
-        if c.chapter_id.is_empty() {
-            c.chapter_id = chapter_id.to_string();
-        }
-        if c.chapter_id != chapter_id {
-            return Err(format!("章节标识不匹配 {}，原文件未修改。", path.display()));
-        }
-        Ok(c)
-    }
+        let dir = self.root.join("backups").join(&book.id);
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let stamp = crate::text::now_iso();
+        let file = dir.join(format!("book-{stamp}.json"));
+        write_json_atomic(&file, book)?;
 
-    pub fn write_content(&self, book_id: &str, c: &ChapterContent) -> Result<(), String> {
-        write_json_atomic(&self.chapter_path(book_id, &c.chapter_id), c)
-    }
-
-    /// 全书搜索：在 Rust 侧一次遍历完成，避免前端"每章一次 IPC + 每章解析全部历史版本"。
-    /// 返回命中章节、命中次数与一段上下文片段（原样文本，转义交给前端）。
-    pub fn search_book(&self, book_id: &str, needle: &str, max_per_chapter: usize) -> Result<Vec<SearchHit>, String> {
-        if needle.trim().is_empty() {
-            return Ok(Vec::new());
-        }
-        let book = self.require_book(book_id)?;
-        let pat = needle.to_lowercase();
-        let mut hits = Vec::new();
-        for vol in &book.volumes {
-            for ch in &vol.chapters {
-                let content = match self.read_content(book_id, &ch.id) {
-                    Ok(c) => c.content,
-                    // 单章读不了（损坏/缺失）不该让整次搜索失败，跳过即可
-                    Err(_) => continue,
-                };
-                let hay = content.to_lowercase();
-                let mut offsets = Vec::new();
-                let mut from = 0usize;
-                while let Some(pos) = hay[from..].find(&pat) {
-                    let abs = from + pos;
-                    if offsets.len() >= max_per_chapter {
-                        break;
-                    }
-                    offsets.push(abs);
-                    from = abs + pat.len().max(1);
-                }
-                if offsets.is_empty() {
-                    continue;
-                }
-                // 小写化可能改变字节长度，所以用字符数换算回原串
-                let original: Vec<char> = content.chars().collect();
-                let first = hay[..offsets[0]].chars().count();
-                let needle_chars = pat.chars().count();
-                let start = first.saturating_sub(30);
-                let end = (first + needle_chars + 40).min(original.len());
-                let head: String = original[start..first].iter().collect();
-                let hit: String = original[first..(first + needle_chars).min(original.len())].iter().collect();
-                let tail: String = original[(first + needle_chars).min(original.len())..end].iter().collect();
-                hits.push(SearchHit {
-                    chapter_id: ch.id.clone(),
-                    chapter_title: ch.title.clone(),
-                    volume_title: vol.title.clone(),
-                    count: offsets.len(),
-                    head,
-                    hit,
-                    tail,
-                });
+        // 按文件名排序（时间戳天然递增），只留最新的几份
+        if let Ok(rd) = fs::read_dir(&dir) {
+            let mut files: Vec<PathBuf> = rd
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+                .collect();
+            files.sort();
+            while files.len() > BACKUP_KEEP_PER_BOOK {
+                let oldest = files.remove(0);
+                let _ = fs::remove_file(oldest);
             }
         }
-        Ok(hits)
+        Ok(())
     }
 
     pub fn read_cards(&self, book_id: &str) -> Result<Vec<Card>, String> {
         Ok(read_json(&self.cards_path(book_id))?.unwrap_or_default())
     }
 
-    // -- 书籍 ---------------------------------------------------------------
+    pub fn read_content(&self, book_id: &str, chapter_id: &str) -> Result<ChapterContent, String> {
+        let path = self.chapter_path(book_id, chapter_id);
+        if let Some(mut c) = read_json::<ChapterContent>(&path)? {
+            if c.chapter_id.is_empty() {
+                c.chapter_id = chapter_id.to_string();
+            }
+            return Ok(c);
+        }
+        if let Ok(book) = self.book(book_id) {
+            if let Some(ch) = book.volumes.iter().flat_map(|v| &v.chapters).find(|c| c.id == chapter_id) {
+                if ch.char_count > 0 || ch.versions > 0 {
+                    return Err(format!("章节内容文件缺失 {}: 《{}》", path.display(), ch.title));
+                }
+            }
+        }
+        Ok(ChapterContent {
+            chapter_id: chapter_id.to_string(),
+            ..Default::default()
+        })
+    }
+
+    /// 全书正文搜索：在 Rust 侧一次遍历本作品全部章节，返回命中列表。
+    ///
+    /// 为什么不让前端一章章调 `read_chapter`：
+    /// `read_chapter` 返回的 JSON 带着整章所有历史版本（每章最多 200 份完整正文），
+    /// 一百章的书搜一次就要跨 IPC 搬几千份快照；在 Rust 里直接扫则不经过前端。
+    pub fn search_book(&self, book_id: &str, keyword: &str, max_per_chapter: usize) -> Result<Vec<SearchHit>, String> {
+        let kw = keyword.trim();
+        if kw.is_empty() {
+            return Ok(Vec::new());
+        }
+        let book = self.book(book_id)?;
+        let pat = kw.to_lowercase();
+        let cap = max_per_chapter.max(1);
+        let mut out = Vec::new();
+
+        for vol in &book.volumes {
+            for ch in &vol.chapters {
+                let content = self.read_content(book_id, &ch.id)?.content;
+                if content.is_empty() {
+                    continue;
+                }
+                let matches = find_case_insensitive(&content, &pat, cap);
+                if matches.is_empty() {
+                    continue;
+                }
+                let (start, end) = matches[0];
+                let (head, hit, tail) = snippet_around(&content, start, end, 24, 48);
+                out.push(SearchHit {
+                    chapter_id: ch.id.clone(),
+                    chapter_title: ch.title.clone(),
+                    volume_title: vol.title.clone(),
+                    count: matches.len(),
+                    head,
+                    hit,
+                    tail,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn write_content(&self, book_id: &str, content: &ChapterContent) -> Result<(), String> {
+        let path = self.chapter_path(book_id, &content.chapter_id);
+        write_json_atomic(&path, content)
+    }
+
+    // -- 书籍 CRUD ----------------------------------------------------------
 
     pub fn create_book(&mut self, title: &str, author: &str, genre: &str) -> Result<BookMeta, String> {
         let mut book = BookMeta {
-            id: uuid::Uuid::new_v4().to_string(),
             title: if title.trim().is_empty() { "未命名作品".into() } else { title.trim().into() },
-            author: author.to_string(),
-            genre: genre.to_string(),
+            author: author.trim().into(),
+            genre: genre.trim().into(),
             ..Default::default()
         };
-        book.settings = self.settings.clone();
-        let vol_id = uuid::Uuid::new_v4().to_string();
-        let ch_id = uuid::Uuid::new_v4().to_string();
-        book.volumes.push(Volume {
-            id: vol_id,
+        let first_chapter = Chapter {
+            title: "第一章".into(),
+            ..Default::default()
+        };
+        let first_volume = Volume {
             title: "第一卷".into(),
+            chapters: vec![first_chapter.clone()],
+            ..Default::default()
+        };
+        book.volumes.push(first_volume);
+
+        fs::create_dir_all(self.book_dir(&book.id)).map_err(|e| e.to_string())?;
+        fs::create_dir_all(self.content_dir(&book.id)).map_err(|e| e.to_string())?;
+        self.write_content(
+            &book.id,
+            &ChapterContent {
+                chapter_id: first_chapter.id.clone(),
+                content: String::new(),
+                updated_at: now_ms(),
+                versions: Vec::new(),
+            },
+        )?;
+        write_json_atomic(&self.cards_path(&book.id), &Vec::<Card>::new())?;
+
+        self.registry.books.push(book.clone());
+        self.save_book(&book)?;
+        self.save_registry()?;
+        Ok(book)
+    }
+
+    /// 创建示例作品（用于首次启动或自动化验收）。
+    pub fn create_sample_book(&mut self) -> Result<BookMeta, String> {
+        let mut book = BookMeta {
+            title: "山有木兮".into(),
+            author: "佚名".into(),
+            genre: "古风 · 奇幻".into(),
+            summary: "少年自北境雪原走出，携一卷残破山海图，寻回失落的四时之名。".into(),
+            cover_color: "#5b6be1".into(),
+            ..Default::default()
+        };
+        let c1_body = "\u{3000}\u{3000}北境的雪已经下了整整七日。\n\n\u{3000}\u{3000}沈照站在破庙门口，把最后半截松枝添进火堆。火光映着他手里的那卷羊皮——边角焦黑，只剩“山有木兮”四个古篆还算清晰。\n\n\u{3000}\u{3000}“天亮之前，得走出这片林子。”他对自己说。\n";
+        let c2_body = "\u{3000}\u{3000}山道尽头有一座无人看守的石桥，桥下云雾翻涌，听不见水声。\n\n\u{3000}\u{3000}桥头立着一块风化的界碑，碑上刻着小字：入此门者，当忘旧名。\n";
+        let c1 = Chapter {
+            title: "第一章 残图".into(),
+            summary: "破庙避雪，初见山海残图。".into(),
+            status: "final".into(),
+            char_count: count_text(c1_body).total,
+            versions: 1,
+            ..Default::default()
+        };
+        let c2 = Chapter {
+            title: "第二章 无名桥".into(),
+            summary: "踏入界碑，旧名将忘。".into(),
+            status: "draft".into(),
+            char_count: count_text(c2_body).total,
+            versions: 1,
+            ..Default::default()
+        };
+        let v1 = Volume {
+            title: "第一卷 朔雪行".into(),
+            summary: "自北境南下，入山海界。".into(),
             expanded: true,
+            chapters: vec![c1.clone(), c2.clone()],
+            ..Default::default()
+        };
+        book.volumes.push(v1);
+
+        fs::create_dir_all(self.book_dir(&book.id)).map_err(|e| e.to_string())?;
+        fs::create_dir_all(self.content_dir(&book.id)).map_err(|e| e.to_string())?;
+        for (ch, body) in [(&c1, c1_body), (&c2, c2_body)] {
+            let now = now_ms();
+            let content = ChapterContent {
+                chapter_id: ch.id.clone(),
+                content: body.to_string(),
+                updated_at: now,
+                versions: vec![Version {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    created_at: now,
+                    kind: "manual".into(),
+                    label: "初稿留存".into(),
+                    chars: count_text(body).total,
+                    content: body.to_string(),
+                }],
+            };
+            self.write_content(&book.id, &content)?;
+        }
+
+        let mut fields = std::collections::BTreeMap::new();
+        fields.insert("年龄".into(), "十七".into());
+        fields.insert("信物".into(), "山海残图".into());
+        let cards = vec![
+            Card {
+                kind: "character".into(),
+                title: "沈照".into(),
+                content: "北境猎户养子，性情沉静，识古篆。".into(),
+                tags: vec!["主角".into(), "北境".into()],
+                color: "#8ab4f8".into(),
+                pinned: true,
+                fields,
+                ..Default::default()
+            },
+            Card {
+                kind: "plot".into(),
+                title: "四时失名".into(),
+                content: "山海界每逢甲子便有一季之名被抹去，百姓随之遗忘那段岁月。".into(),
+                tags: vec!["主线".into(), "世界观".into()],
+                color: "#f5a623".into(),
+                pinned: false,
+                ..Default::default()
+            },
+            Card {
+                kind: "inspiration".into(),
+                title: "桥下无水声".into(),
+                content: "不是因为深，而是桥下流淌的是尚未写完的年月。".into(),
+                tags: vec!["意象".into()],
+                color: "#7ad1a6".into(),
+                pinned: false,
+                ..Default::default()
+            },
+            Card {
+                kind: "world".into(),
+                title: "山海界碑".into(),
+                content: "凡过界碑者，须以一件旧事换取通行；归来时若无人记得，便永留界内。".into(),
+                tags: vec!["规则".into()],
+                color: "#c792ea".into(),
+                pinned: false,
+                ..Default::default()
+            },
+        ];
+        write_json_atomic(&self.cards_path(&book.id), &cards)?;
+
+        self.registry.books.push(book.clone());
+        self.save_book(&book)?;
+        self.save_registry()?;
+        Ok(book)
+    }
+
+    /// 供 `NOVEL_MANAGER_SELFTEST=1` 截图验收使用的示例作品：《青城剑歌》。
+    /// 与前端原先的 `seed.js` 内容保持一致，启动即在 Rust 侧直接落盘，
+    /// 无需等 WebView 跑完一串异步 IPC 再刷新界面。
+    pub fn seed_selftest_book(&mut self) -> Result<BookMeta, String> {
+        let mut book = BookMeta {
+            title: "青城剑歌".into(),
+            author: "林间客".into(),
+            genre: "仙侠 · 武侠".into(),
+            summary: "青城山下的一把旧铁剑，牵出三十年前蜀道断魂崖的旧案。".into(),
+            cover_color: "#5b6be1".into(),
+            ..Default::default()
+        };
+        let c1_body = [
+            "\u{3000}\u{3000}雪落下来了。",
+            "\u{3000}\u{3000}沈孤鸿站在青城山门前的石阶上，看着远处镇子里一盏接一盏亮起的灯火。北风沿着山脊刮过来，卷起他衣角的一片霜色。",
+            "\u{3000}\u{3000}“你还是来了。”身后有人说话，声音很轻，却刚好压过风声。",
+            "\u{3000}\u{3000}他没有回头，只是把右手按在那柄缠着旧布条的铁剑上：“我等这一天，等了整整十年。”",
+            "\u{3000}\u{3000}石阶下的松林里走出一道青衫身影，手里提着一盏早已熄灭的纸灯笼。灯笼纸上用朱砂写着一个“陆”字，墨迹被雪水洇开，像一道未干的血痕。",
+            "\u{3000}\u{3000}“十年前断魂崖那一战，活着下山的人只有三个。”青衫人停在七步之外，“掌门闭关，师叔远走西域，剩下的那一个——就是你师父。”",
+            "\u{3000}\u{3000}沈孤鸿指节微微发白：“我师父三年前已经葬在后山。”",
+            "\u{3000}\u{3000}“那口棺材里只有一柄断剑。”青衫人把纸灯笼放在雪地上，“真正的陆掌峰，上个月在洛阳城南出现过。”",
+        ]
+        .join("\n\n");
+        let c2_body = "\u{3000}\u{3000}山腰的望云亭里有一口古钟，钟身裂了一道寸许宽的缝。\n\n\u{3000}\u{3000}守钟的老道士双目已盲，却能在风雪声里听出每一柄剑的来历。\n";
+        let c3_body = "\u{3000}\u{3000}剑谱只剩最后三页，每一页背面都记着一个名字与一处地名。\n";
+        let c1_prev = "\u{3000}\u{3000}雪落下来了。\n\n\u{3000}\u{3000}沈孤鸿站在青城山门前的石阶上，看着远处的灯火。\n\n\u{3000}\u{3000}“你还是来了。”身后有人说话。\n";
+
+        let now = now_ms();
+        let c1 = Chapter {
+            title: "第一章 山门夜雪".into(),
+            summary: "旧客携朱砂灯笼夜访青城，道出师父未死之秘。".into(),
+            status: "published".into(),
+            char_count: count_text(&c1_body).total,
+            versions: 2,
+            ..Default::default()
+        };
+        let c2 = Chapter {
+            title: "第二章 断钟人".into(),
+            summary: "望云亭盲眼道人辨剑识人。".into(),
+            status: "revising".into(),
+            char_count: count_text(c2_body).total,
+            versions: 1,
+            ..Default::default()
+        };
+        let c3 = Chapter {
+            title: "第三章 残谱三页".into(),
+            summary: "三页剑谱背后的名单。".into(),
+            status: "outline".into(),
+            char_count: count_text(c3_body).total,
+            versions: 1,
+            ..Default::default()
+        };
+        let v1 = Volume {
+            title: "第一卷 风起青城".into(),
+            summary: "".into(),
+            expanded: true,
+            chapters: vec![c1.clone(), c2.clone(), c3.clone()],
+            ..Default::default()
+        };
+        let v2 = Volume {
+            title: "第二卷 蜀道行".into(),
+            summary: "".into(),
+            expanded: true,
+            chapters: Vec::new(),
+            ..Default::default()
+        };
+        book.volumes.push(v1);
+        book.volumes.push(v2);
+
+        fs::create_dir_all(self.book_dir(&book.id)).map_err(|e| e.to_string())?;
+        fs::create_dir_all(self.content_dir(&book.id)).map_err(|e| e.to_string())?;
+
+        self.write_content(
+            &book.id,
+            &ChapterContent {
+                chapter_id: c1.id.clone(),
+                content: c1_body.clone(),
+                updated_at: now,
+                versions: vec![
+                    Version {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        created_at: now,
+                        kind: "manual".into(),
+                        label: "定稿 · 补入洛阳线索".into(),
+                        chars: count_text(&c1_body).total,
+                        content: c1_body,
+                    },
+                    Version {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        created_at: now - 3600_000,
+                        kind: "auto".into(),
+                        label: "初稿".into(),
+                        chars: count_text(c1_prev).total,
+                        content: c1_prev.to_string(),
+                    },
+                ],
+            },
+        )?;
+        for (ch, body) in [(&c2, c2_body), (&c3, c3_body)] {
+            self.write_content(
+                &book.id,
+                &ChapterContent {
+                    chapter_id: ch.id.clone(),
+                    content: body.to_string(),
+                    updated_at: now,
+                    versions: vec![Version {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        created_at: now,
+                        kind: "auto".into(),
+                        label: "自动存档".into(),
+                        chars: count_text(body).total,
+                        content: body.to_string(),
+                    }],
+                },
+            )?;
+        }
+
+        let mut f1 = std::collections::BTreeMap::new();
+        f1.insert("身份".into(), "青城弃徒".into());
+        f1.insert("佩剑".into(), "无名铁剑（剑脊藏字）".into());
+        f1.insert("目标".into(), "查清师父假死与断魂崖真相".into());
+        let mut f2 = std::collections::BTreeMap::new();
+        f2.insert("身份".into(), "旧友 / 暗线信使".into());
+        f2.insert("信物".into(), "朱砂“陆”字纸灯笼".into());
+        let cards = vec![
+            Card {
+                kind: "character".into(),
+                title: "沈孤鸿".into(),
+                content: "青城派掌峰弟子，沉静寡言。十年前师门变故后守山至今。".into(),
+                tags: vec!["主角".into(), "剑客".into(), "青城".into()],
+                color: "#8ab4f8".into(),
+                pinned: true,
+                fields: f1,
+                ..Default::default()
+            },
+            Card {
+                kind: "character".into(),
+                title: "苏晚灯".into(),
+                content: "提着熄灭纸灯笼登门的不速之客，知晓断魂崖之战的内情。".into(),
+                tags: vec!["青衫客".into(), "洛阳线".into()],
+                color: "#7ad1a6".into(),
+                pinned: false,
+                fields: f2,
+                ..Default::default()
+            },
+            Card {
+                kind: "plot".into(),
+                title: "断魂崖旧案".into(),
+                content: "三十年前蜀道截杀，三派高手尽殁，唯余三人生还；棺中空剑指向洛阳。".into(),
+                tags: vec!["主线".into(), "伏笔".into()],
+                color: "#f5a623".into(),
+                pinned: true,
+                ..Default::default()
+            },
+            Card {
+                kind: "inspiration".into(),
+                title: "盲眼听剑".into(),
+                content: "每一柄剑出鞘时的风声都不一样，杀过人的剑会慢半拍。".into(),
+                tags: vec!["意象".into(), "台词".into()],
+                color: "#c792ea".into(),
+                pinned: false,
+                ..Default::default()
+            },
+            Card {
+                kind: "world".into(),
+                title: "青城七十二峰戒律".into(),
+                content: "凡弟子下山，须在望云亭敲钟三声；钟裂之后，再无人敢敲第三声。".into(),
+                tags: vec!["门派".into(), "规矩".into()],
+                color: "#80deea".into(),
+                pinned: false,
+                ..Default::default()
+            },
+        ];
+        write_json_atomic(&self.cards_path(&book.id), &cards)?;
+
+        // 把“山有木兮”退到书架第二位，《青城剑歌》设为当前打开的作品
+        self.registry.books.insert(0, book.clone());
+        self.settings.last_book_id = book.id.clone();
+        self.save_book(&book)?;
+        self.save_registry()?;
+        self.save_settings()?;
+        Ok(book)
+    }
+
+    /// 供 `NOVEL_MANAGER_UITEST=1` 自动化验收使用的最小书架（只有一章空文）。
+    pub fn reset_for_uitest(&mut self) -> Result<BookMeta, String> {
+        for sub in ["books", "content", "trash"] {
+            let p = self.root.join(sub);
+            let _ = fs::remove_dir_all(&p);
+            fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+        }
+        self.registry.books.clear();
+        self.settings.theme = "light".into();
+        let book = self.create_book("验收作品", "测试作者", "武侠")?;
+        self.settings.last_book_id = book.id.clone();
+        self.save_settings()?;
+        Ok(book)
+    }
+
+    pub fn update_book_meta(
+        &mut self,
+        book_id: &str,
+        title: Option<String>,
+        author: Option<String>,
+        genre: Option<String>,
+        summary: Option<String>,
+        cover_color: Option<String>,
+    ) -> Result<BookMeta, String> {
+        let now = now_ms();
+        let snapshot = {
+            let book = self.book_mut(book_id)?;
+            if let Some(t) = title {
+                if !t.trim().is_empty() {
+                    book.title = t.trim().into();
+                }
+            }
+            if let Some(a) = author {
+                book.author = a.trim().into();
+            }
+            if let Some(g) = genre {
+                book.genre = g.trim().into();
+            }
+            if let Some(s) = summary {
+                book.summary = s;
+            }
+            if let Some(c) = cover_color {
+                if !c.trim().is_empty() {
+                    book.cover_color = c;
+                }
+            }
+            book.updated_at = now;
+            book.clone()
+        };
+        self.persist_structure(book_id, snapshot.clone())?;
+        Ok(snapshot)
+    }
+
+    pub fn reorder_volumes(&mut self, book_id: &str, order: &[String]) -> Result<(), String> {
+        let snapshot = {
+            let book = self.book_mut(book_id)?;
+            let mut next = Vec::with_capacity(book.volumes.len());
+            for id in order {
+                if let Some(pos) = book.volumes.iter().position(|v| &v.id == id) {
+                    next.push(book.volumes.remove(pos));
+                }
+            }
+            next.append(&mut book.volumes);
+            book.volumes = next;
+            book.updated_at = now_ms();
+            book.clone()
+        };
+        self.persist_structure(book_id, snapshot)
+    }
+
+    /// 如果作品没有任何卷/章，补齐一个默认卷与第一章，避免界面出现无法落笔的空壳。
+    pub fn ensure_structure(&mut self, book_id: &str) -> Result<BookMeta, String> {
+        let current = self.book(book_id)?;
+        if !current.volumes.is_empty() {
+            return Ok(current);
+        }
+        let ch = Chapter {
+            title: "第一章".into(),
+            ..Default::default()
+        };
+        let vol = Volume {
+            title: "第一卷".into(),
+            chapters: vec![ch.clone()],
+            ..Default::default()
+        };
+        self.write_content(
+            book_id,
+            &ChapterContent {
+                chapter_id: ch.id.clone(),
+                content: String::new(),
+                updated_at: now_ms(),
+                versions: Vec::new(),
+            },
+        )?;
+        let snapshot = {
+            let b = self.book_mut(book_id)?;
+            b.volumes.push(vol);
+            b.updated_at = now_ms();
+            b.clone()
+        };
+        self.persist_structure(book_id, snapshot.clone())?;
+        Ok(snapshot)
+    }
+
+    /// 复制一本作品（测试或作为模板用）。
+    pub fn duplicate_book(&mut self, book_id: &str) -> Result<BookMeta, String> {
+        let src = self.book(book_id)?;
+        let mut book = BookMeta {
+            title: format!("{}（副本）", src.title),
+            author: src.author.clone(),
+            genre: src.genre.clone(),
+            summary: src.summary.clone(),
+            cover_color: src.cover_color.clone(),
+            ..Default::default()
+        };
+        fs::create_dir_all(self.book_dir(&book.id)).map_err(|e| e.to_string())?;
+        fs::create_dir_all(self.content_dir(&book.id)).map_err(|e| e.to_string())?;
+        write_json_atomic(&self.cards_path(&book.id), &self.read_cards(book_id)?)?;
+        book.volumes.push(Volume {
+            title: "第一卷".into(),
             chapters: vec![Chapter {
-                id: ch_id,
                 title: "第一章".into(),
                 ..Default::default()
             }],
@@ -1182,6 +973,14 @@ impl Store {
         version_kind: &str,
     ) -> Result<SaveResult, String> {
         let now = now_ms();
+        if !self
+            .book(book_id)?
+            .volumes
+            .iter()
+            .any(|v| v.chapters.iter().any(|c| c.id == chapter_id))
+        {
+            return Err(format!("找不到章节 {chapter_id}"));
+        }
         let count = count_text(content);
         let mut stored = self.read_content(book_id, chapter_id)?;
         let previous = stored.content.clone();
@@ -1634,9 +1433,71 @@ impl Store {
     }
 }
 
+/// 在 `content` 里不区分大小写地查找 `pat_lower`（已是小写），
+/// 返回原串里的 `(start_byte, end_byte)` 列表（最多 `cap` 条）。
+/// 逐字符累加小写字节数来反查原串偏移，避免 `İ` 等变长小写字符越界。
+fn find_case_insensitive(content: &str, pat_lower: &str, cap: usize) -> Vec<(usize, usize)> {
+    if pat_lower.is_empty() {
+        return Vec::new();
+    }
+    let hay = content.to_lowercase();
+    let mut hits = Vec::new();
+    let mut from = 0usize;
+    while from <= hay.len() && hits.len() < cap {
+        let Some(rel) = hay[from..].find(pat_lower) else { break };
+        let abs = from + rel;
+        let end_abs = abs + pat_lower.len();
+        let mut consumed = 0usize;
+        let mut orig_start: Option<usize> = None;
+        let mut orig_end = content.len();
+        for (byte, ch) in content.char_indices() {
+            if orig_start.is_none() && consumed >= abs {
+                orig_start = Some(byte);
+            }
+            if consumed >= end_abs {
+                orig_end = byte;
+                break;
+            }
+            consumed += ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+        }
+        let s = orig_start.unwrap_or(content.len());
+        if s <= orig_end && orig_end <= content.len() {
+            hits.push((s, orig_end));
+        }
+        from = end_abs.max(from + 1);
+    }
+    hits
+}
+
+/// 取 `content[start..end]` 前 `before_chars` 个字符与后 `after_chars` 个字符，
+/// 把换行替换成空格，方便在搜索结果列表里单行展示。
+fn snippet_around(
+    content: &str,
+    start: usize,
+    end: usize,
+    before_chars: usize,
+    after_chars: usize,
+) -> (String, String, String) {
+    let head_full = &content[..start];
+    let hit = content[start..end].replace('\n', " ");
+    let tail_full = &content[end..];
+    let head: String = head_full
+        .chars()
+        .rev()
+        .take(before_chars)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>()
+        .replace('\n', " ");
+    let tail: String = tail_full.chars().take(after_chars).collect::<String>().replace('\n', " ");
+    (head, hit, tail)
+}
+
 #[cfg(test)]
 mod reliability_tests {
     use super::*;
+    use std::path::Path;
 
     struct Workspace(PathBuf);
     impl Workspace {
@@ -1747,9 +1608,28 @@ mod reliability_tests {
         let info = location_info(&other, &config, false);
         assert!(info.missing && info.needs_choice, "记住的位置不可用时应该重新问");
 
-        // --data-dir 指定 → 从来不问，也不允许界面改
+        // --data-dir 指定或移动端固定目录 → 从来不问，也不允许界面改
         let forced = location_info(&other, &config, true);
         assert!(forced.is_forced && !forced.needs_choice);
+    }
+
+    #[test]
+    fn mobile_app_data_dir_isolates_manuscripts_from_webview_cache() {
+        let ws = Workspace::new();
+        let android_data = ws.0.join("com.heartwrite.novelmanager");
+        fs::create_dir_all(android_data.join("cache")).unwrap();
+        fs::create_dir_all(android_data.join("app_webview")).unwrap();
+
+        // 移动端全新启动：应隔离到 manuscripts 子目录，避开 WebView 缓存目录
+        let resolved = resolve_app_data_dir(Some(android_data.clone()), true);
+        assert_eq!(resolved, android_data.join("manuscripts"));
+        let mut store = Store::load(resolved.clone()).unwrap();
+        let (book_id, _) = draft(&mut store);
+        assert_eq!(store.book(&book_id).unwrap().title, "测试作品");
+
+        // 若顶层已经有老版本留下的 books.json，则兼容保留在原位
+        fs::write(android_data.join("books.json"), b"{\"books\":[]}").unwrap();
+        assert_eq!(resolve_app_data_dir(Some(android_data.clone()), true), android_data);
     }
 
     #[test]
@@ -1761,6 +1641,7 @@ mod reliability_tests {
 
         // 原地不动、互相嵌套、空路径都要挡住
         assert!(validate_new_location(&current, &current).is_err());
+        assert!(is_same_location(&current, &current));
         assert!(validate_new_location(&current, &current.join("inner")).is_err());
         assert!(validate_new_location(&current, base).is_err());
         assert!(validate_new_location(&current, Path::new("")).is_err());

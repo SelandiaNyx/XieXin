@@ -14,6 +14,11 @@ pub fn run(store: &mut Store) -> Result<String, String> {
     run_inner(store)
 }
 
+pub fn run_smoke_at(root: &std::path::Path) -> Result<String, String> {
+    let mut store = Store::load(root.to_path_buf())?;
+    run(&mut store)
+}
+
 fn run_inner(store: &mut Store) -> Result<String, String> {
     let mut log: Vec<String> = Vec::new();
     log.push(line("env", format!("数据目录 {}", store.root.display())));

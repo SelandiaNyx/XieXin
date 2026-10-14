@@ -9,6 +9,7 @@
 import { state, setState, subscribe } from './store.js';
 import { isNarrow, isTouch, onViewportChange } from './viewport.js';
 import { moveChapterDialog } from './sidebar.js';
+import { flushPendingSave } from './editor.js';
 import { closeModal } from './ui.js';
 import { log } from './api.js';
 
@@ -268,7 +269,14 @@ function consumeBack() {
   const findBar = document.getElementById('findBar');
   if (findBar && !findBar.hidden) { clickId('closeFind'); return true; }
   const win = window.__TAURI__?.window?.getCurrentWindow?.();
-  if (win && typeof win.close === 'function') { win.close(); return true; }
+  if (win && typeof win.close === 'function') {
+    if (state.dirty || state.saving) {
+      flushPendingSave().finally(() => win.close());
+    } else {
+      win.close();
+    }
+    return true;
+  }
   return false;
 }
 

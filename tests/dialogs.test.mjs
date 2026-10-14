@@ -86,6 +86,29 @@ test('书架与资料的封面图片', { skip: support.ok ? false : support.reas
           }
         });
 
+        await t.test('移动端（无原生文件选择器）：全新安装不弹目录询问，直接完成启动', async () => {
+          const page = await openPage(browser, { url: `${base}?location=choose&nopickers`, width: 390, height: 844, touch: true });
+          try {
+            const boot = await page.evaluate(`(async () => {
+              await new Promise((r) => setTimeout(r, 1100));
+              return {
+                ready: window.__moge.ready,
+                modalHidden: document.getElementById('overlay').hidden,
+                hasNativePickers: window.__moge.state.hasNativePickers,
+                openDirHidden: document.getElementById('openStorageDir').hidden,
+                activeChapter: window.__moge.state.activeChapterId,
+              };
+            })()`);
+            assert.equal(boot.ready, true, '移动端首次启动不应被目录选择弹层卡住');
+            assert.equal(boot.modalHidden, true, '移动端不应弹出稿件目录选择框');
+            assert.equal(boot.hasNativePickers, false);
+            assert.equal(boot.openDirHidden, true, '移动端应隐藏侧栏"打开目录"按钮');
+            assert.equal(boot.activeChapter, 'c1', '移动端启动后应直接打开章节');
+          } finally {
+            await page.close();
+          }
+        });
+
         // ---------------------------------------------- 一卷都没有时的新建章节
         await t.test('一卷都没有时：新建章节会先补一卷，而不是抱怨', async () => {
           const page = await openPage(browser, { url: `${base}?novolume`, width: 1280, height: 800, dsf: 1, touch: false });
