@@ -433,7 +433,7 @@ export function openHelp() {
       <div class="section-title">关于</div>
       <div class="kv-list">
         <div class="kv"><span class="k">名称</span><span>写心 · HeartWrite</span></div>
-        <div class="kv"><span class="k">版本</span><span>0.1.0</span></div>
+        <div class="kv"><span class="k">版本</span><span>0.2.3</span></div>
         <div class="kv"><span class="k">技术栈</span><span>Rust + Tauri 2 + WebView2（原生桌面应用）</span></div>
         <div class="kv"><span class="k">许可证</span><span>GPL-3.0 · 修改后分发须同样开源</span></div>
         <div class="kv"><span class="k">本次会话新增</span><span>${state.sessionChars.toLocaleString()} 字</span></div>

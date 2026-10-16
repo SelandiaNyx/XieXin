@@ -3,7 +3,20 @@
 一个用 **Rust + Tauri 2** 写成的原生 Windows 桌面应用，专门用来写长篇小说。
 完全离线运行，所有稿件都存在本机，自带版本历史、导出、卡片灵感墙与一键排版。
 
-## 本次更新：手机端三处体验修正
+## 本次更新（v0.2.3）：架构重构与手机端启动修复
+
+- **解决手机端无法启动问题**：
+  - 修复 Android 上 `Store::load` 因目录退化为根路径只读分区引发 `Read-only file system` panic 崩溃的问题；
+  - 手机端自动将稿件隔离至应用私有目录中的 `manuscripts/` 子目录，避免与 WebView 系统缓存（cache、app_webview）冲突；
+  - 手机端静默跳过无原生文件夹选择器的首次启动选择框，防止启动流程死锁；
+  - 补充 `core:window:allow-close` 权限，确保物理返回键退至最后一档关窗口时不触发权限拦截。
+- **模块化架构重构**：
+  - Rust 存储模块：将 1,900+ 行单体 `storage.rs` 拆解为 `storage/` 子模块（`models`、`io`、`location`、`mod`）；
+  - EPUB 与字体模块：独立提取 `epub.rs` 与 `fonts.rs`；
+  - 前端弹层重构：将 1,600+ 行单体 `dialogs.js` 拆解为 `dialogs/` 独立组件（`bookshelf`、`location`、`settings`、`export`、`history`、`tools`）；
+  - 手机切后台 / 锁屏自动落盘（`visibilitychange`）及返回键退出前自动保存未完成改动。
+
+## v0.2.2：手机端三处体验修正
 
 - **一键排版不再往正文里插章节标题**：章节标题本来就有独立输入框（顶栏 + 稿纸大标题），
   排版再插一行等于同一句话写两处，导出的稿子里也会多一行。
