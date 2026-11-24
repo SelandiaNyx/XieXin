@@ -250,15 +250,14 @@ pwsh -File packaging/package.ps1 # 构建并打包 release/HeartWrite-Windows.zi
 
 ### 三个平台怎么构建
 
-Windows 可以在本机构建；**Linux 与 Android 必须用 CI**，理由不是偷懒而是硬约束：
-
-| 目标 | 在哪里构建 | 为什么不能在本机 |
+| 目标 | 在哪里构建 | 产物与说明 |
 | --- | --- | --- |
-| Windows 便携版 | 本机（`packaging/package.ps1`） | — |
-| Arch Linux 便携版 | `.github/workflows/build-linux.yml`，跑在 `archlinux:base-devel` 容器里 | Windows 无法产出 ELF 可执行文件，链接需要 ELF 工具链与 glibc；本机也没有 WSL 或容器运行时 |
-| Android APK | `.github/workflows/build-android.yml`，跑在 Ubuntu | 需要 Android SDK + NDK + JDK；本机未安装 |
+| Windows 真·单文件绿色版 & NSIS 安装版 | `.github/workflows/build-windows.yml`（`windows-latest` + MSVC） | MSVC 自动静态链接 `WebView2LoaderStatic.lib`，同时产出**零外部 DLL 的单文件 `HeartWrite-<ver>-Windows-Portable.exe`**（双击即用）与**标准安装版 `HeartWrite-<ver>-Windows-Setup.exe`**（自动建桌面图标与开始菜单）；CI 会用 `dumpbin` + `launch-smoke.mjs --standalone` 实机验证空目录弹窗启动 |
+| Windows 本机调试 / 便携 ZIP | 本机（`dev.ps1` / `packaging/package.ps1`，MinGW GNU） | 本机无需安装数 GB 的 MSVC Build Tools，适合日常开发调试；因 GNU 目标动态链接 `WebView2Loader.dll`，便携目录需保留同目录 DLL |
+| Arch Linux 便携版 | `.github/workflows/build-linux.yml`（`archlinux:base-devel` 容器） | Windows 无法产出 ELF 可执行文件，链接需要 ELF 工具链与 glibc |
+| Android APK | `.github/workflows/build-android.yml`（Ubuntu） | 需要 Android SDK + NDK + JDK，按 ABI 拆分签名 |
 
-两个工作流都支持手动触发（Actions 页面 → Run workflow），推送 `v0.1.*` / `v0.2.*` / `v1.*` 形式的 tag 时会自动构建**并把产物挂到对应 Release**。
+三条工作流均支持手动触发（Actions 页面 → Run workflow；Windows 工作流还支持填写 `release_tag` 直接补挂到指定 Release），推送 `v0.1.*` / `v0.2.*` / `v1.*` 形式的 tag 时会自动构建**并把产物挂到对应 Release**。
 
 Arch 用户有两条路：
 

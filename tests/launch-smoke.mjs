@@ -10,6 +10,7 @@
 //
 // 用法：
 //   node tests/launch-smoke.mjs --exe "D:\MyCode\XieXin\release\HeartWrite\HeartWrite.exe"
+//   node tests/launch-smoke.mjs --standalone --exe "dist/HeartWrite-1.0.0-Windows-Portable.exe"
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -20,6 +21,7 @@ import { spawn, execFileSync } from 'node:child_process';
 function parseArgs(argv) {
   let exe = '';
   let timeoutMs = 25000;
+  let standalone = false;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--exe' && argv[i + 1]) {
       exe = argv[i + 1];
@@ -27,12 +29,14 @@ function parseArgs(argv) {
     } else if (argv[i] === '--timeout' && argv[i + 1]) {
       timeoutMs = Math.max(5000, Number(argv[i + 1]) || 25000);
       i += 1;
+    } else if (argv[i] === '--standalone') {
+      standalone = true;
     }
   }
   if (!exe) {
     exe = path.resolve(import.meta.dirname, '../src-tauri/target/debug/novel-manager.exe');
   }
-  return { exe: path.resolve(exe), timeoutMs };
+  return { exe: path.resolve(exe), timeoutMs, standalone };
 }
 
 function queryWindow(pid) {
@@ -97,12 +101,26 @@ function cleanPathEnv(rawPath) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
-  const { exe, timeoutMs } = parseArgs(process.argv.slice(2));
-  const exeDir = path.dirname(exe);
+  const { exe, timeoutMs, standalone } = parseArgs(process.argv.slice(2));
   assert.ok(fs.existsSync(exe), `可执行文件不存在：${exe}`);
+
+  let runExe = exe;
+  let runDir = path.dirname(exe);
+  let standaloneStageDir = null;
+
   if (process.platform === 'win32') {
-    const loader = path.join(exeDir, 'WebView2Loader.dll');
-    assert.ok(fs.existsSync(loader), `缺少同目录依赖：${loader}`);
+    if (standalone) {
+      // 真·单文件独立性校验：将单个 .exe 复制到完全空白的临时目录（无任何 DLL/附属文件）再运行
+      standaloneStageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'heartwrite-standalone-'));
+      runExe = path.join(standaloneStageDir, path.basename(exe));
+      runDir = standaloneStageDir;
+      fs.copyFileSync(exe, runExe);
+      const entries = fs.readdirSync(standaloneStageDir);
+      assert.deepEqual(entries, [path.basename(exe)], `单文件隔离目录应仅含单个 exe，实际：${entries.join(', ')}`);
+    } else {
+      const loader = path.join(runDir, 'WebView2Loader.dll');
+      assert.ok(fs.existsSync(loader), `缺少同目录依赖：${loader}`);
+    }
   }
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'heartwrite-launch-'));
@@ -122,8 +140,8 @@ async function main() {
   let stdout = '';
   let stderr = '';
 
-  const child = spawn(exe, ['--data-dir', tmpDir], {
-    cwd: exeDir,
+  const child = spawn(runExe, ['--data-dir', tmpDir], {
+    cwd: runDir,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: false,
@@ -188,7 +206,7 @@ async function main() {
 
     const elapsed = Date.now() - startedAt;
     console.log(
-      `[launch-smoke] PASS (${elapsed}ms) exe=${path.basename(exe)} pid=${child.pid} ` +
+      `[launch-smoke] PASS (${elapsed}ms) mode=${standalone ? 'standalone' : 'portable'} exe=${path.basename(exe)} pid=${child.pid} ` +
         `handle=${winInfo.handle} size=${winInfo.width}x${winInfo.height} title=${JSON.stringify(winInfo.title)}`,
     );
   } finally {
@@ -205,6 +223,11 @@ async function main() {
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch { /* ignore */ }
+    if (standaloneStageDir) {
+      try {
+        fs.rmSync(standaloneStageDir, { recursive: true, force: true });
+      } catch { /* ignore */ }
+    }
   }
 }
 

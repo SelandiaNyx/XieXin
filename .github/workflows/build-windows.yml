@@ -1,0 +1,170 @@
+name: 构建 Windows 单文件版与安装包
+
+# 为什么在 CI 里用 MSVC 构建 Windows 正式分发包：
+#   本机开发使用 MinGW（x86_64-pc-windows-gnu），webview2-com-sys 只能动态链接
+#   WebView2Loader.dll，用户单独拖走 exe 会报缺少 DLL。
+#   而在 windows-latest 的 MSVC（x86_64-pc-windows-msvc）环境下，webview2-com-sys 会自动
+#   静态链接 WebView2LoaderStatic.lib，产出：
+#     1. 真·单文件绿色版 HeartWrite-<ver>-Windows-Portable.exe（零外部 DLL，双击即用）
+#     2. NSIS 单文件安装版 HeartWrite-<ver>-Windows-Setup.exe（自动建桌面图标与开始菜单，体验与手机装 APK 一致）
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '可选：把产物直接挂载到指定 Release（例如 v1.0.0；留空则仅上传为 Artifact）'
+        required: false
+        default: ''
+  push:
+    tags:
+      - 'v0.1.*'
+      - 'v0.2.*'
+      - 'v1.*'
+
+permissions:
+  contents: write   # 打 tag 或指定 release_tag 时挂载产物到 Release
+
+jobs:
+  windows-msvc:
+    name: Windows 真·单文件绿色版 + NSIS 安装包
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust（MSVC 目标）
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: 安装 Node.js（用于运行测试与单文件启动冒烟）
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 缓存 cargo 与 tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-tauri.exe
+            src-tauri/target
+          key: windows-msvc-cargo-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
+          restore-keys: windows-msvc-cargo-
+
+      - name: 安装 Tauri CLI（若未命中缓存）
+        shell: pwsh
+        run: |
+          if (-not (Get-Command cargo-tauri -ErrorAction SilentlyContinue)) {
+            cargo install tauri-cli --version '^2' --locked
+          } else {
+            cargo tauri --version
+          }
+
+      - name: 运行核心回归测试（Rust + 前端）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node --test tests/editor.test.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path src-tauri/Cargo.toml --test core --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: MSVC 编译并生成 NSIS 单文件安装包
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          chcp 65001 | Out-Null
+          cargo tauri build --bundles nsis --ci -- --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 校验零 WebView2Loader.dll 依赖并整理单文件产物
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $cargoToml = Get-Content -Raw -Path src-tauri/Cargo.toml -Encoding utf8
+          if ($cargoToml -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
+            throw "无法从 src-tauri/Cargo.toml 解析版本号"
+          }
+          $version = $Matches[1]
+          $exeSrc = "src-tauri\target\release\novel-manager.exe"
+          if (-not (Test-Path -LiteralPath $exeSrc)) {
+            throw "缺少发布二进制：$exeSrc"
+          }
+
+          # 强校验 PE 导入表：确认已静态链接 WebView2LoaderStatic.lib，绝不依赖外部 WebView2Loader.dll
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = (& $vswhere -latest -property installationPath).Trim()
+          $dumpbin = Get-ChildItem -Path $vsPath -Recurse -Filter "dumpbin.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match 'Hostx64\\x64' } |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dumpbin) { throw "未找到 MSVC dumpbin.exe" }
+          $deps = (& $dumpbin /dependents $exeSrc) | Out-String
+          Write-Output $deps
+          if ($deps -match 'WebView2Loader\.dll') {
+            throw "校验失败：novel-manager.exe 仍动态依赖 WebView2Loader.dll！"
+          }
+          Write-Output "PASS: 零 WebView2Loader.dll 外部依赖（真·单文件静态链接）"
+
+          $nsisInstaller = Get-ChildItem -Path "src-tauri\target\release\bundle\nsis" -Filter "*.exe" -File |
+            Select-Object -First 1
+          if (-not $nsisInstaller) {
+            throw "未在 src-tauri/target/release/bundle/nsis 找到 NSIS 安装包"
+          }
+
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $portableOut = "dist\HeartWrite-${version}-Windows-Portable.exe"
+          $setupOut = "dist\HeartWrite-${version}-Windows-Setup.exe"
+          Copy-Item -LiteralPath $exeSrc -Destination $portableOut -Force
+          Copy-Item -LiteralPath $nsisInstaller.FullName -Destination $setupOut -Force
+          Get-ChildItem dist | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: 实机验证单文件绿色版（空目录、零 DLL 自检 + 冒烟 + GUI 弹窗启动）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $portable = Get-ChildItem dist -Filter "HeartWrite-*-Windows-Portable.exe" -File | Select-Object -First 1
+          if (-not $portable) { throw "未找到单文件绿色版 exe" }
+
+          # 在完全空白的隔离目录中跑 --self-check 与 --smoke-test
+          $stage = Join-Path $env:TEMP ("hw-ci-single-" + [guid]::NewGuid().ToString("N"))
+          $dataDir = Join-Path $stage "data"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          $stagedExe = Join-Path $stage $portable.Name
+          Copy-Item -LiteralPath $portable.FullName -Destination $stagedExe -Force
+
+          $p1 = Start-Process -FilePath $stagedExe -ArgumentList @("--self-check", "--data-dir", $dataDir) -Wait -PassThru
+          if ($p1.ExitCode -ne 0) { throw "单文件 --self-check 失败（exit=$($p1.ExitCode)）" }
+          Get-Content (Join-Path $dataDir "self-check.txt") -Encoding utf8
+
+          $p2 = Start-Process -FilePath $stagedExe -ArgumentList @("--smoke-test", "--data-dir", $dataDir) -Wait -PassThru
+          if ($p2.ExitCode -ne 0) { throw "单文件 --smoke-test 失败（exit=$($p2.ExitCode)）" }
+          Get-Content (Join-Path $dataDir "smoke-report.txt") -Encoding utf8
+
+          # 空目录零 DLL 实机 GUI 启动验证（含真实可见窗口句柄、尺寸、标题与 UI_READY / boot ok）
+          node tests/launch-smoke.mjs --standalone --timeout 45000 --exe $portable.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiexin-windows-single-exe
+          path: dist/*.exe
+          if-no-files-found: error
+
+      - name: 挂到 Release（tag 推送或手动指定 release_tag）
+        if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $inputTag = "${{ inputs.release_tag }}".Trim()
+          $tag = if ($inputTag) { $inputTag } else { "${{ github.ref_name }}" }
+          Get-ChildItem dist -Filter "*.exe" -File | ForEach-Object {
+            Write-Output "上传 $($_.Name) 到 Release $tag"
+            gh release upload $tag $_.FullName --clobber --repo "${{ github.repository }}"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }

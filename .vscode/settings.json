@@ -30,20 +30,57 @@
   "[powershell]": { "editor.defaultFormatter": "ms-vscode.powershell" },
   "[markdown]": { "editor.defaultFormatter": "esbenp.prettier-vscode", "editor.wordWrap": "on" },
 
-  // 构建产物与本地工具链不要出现在搜索/文件树/监听里
+  // 构建产物与本地工具链不要出现在搜索/文件树/监听里（机械硬盘防卡顿关键配置）
+  "files.exclude": {
+    "**/.rustup": true,
+    "**/.cargo": true,
+    "**/.tooling/mingw": true,
+    "**/src-tauri/target": true,
+    "**/release": true,
+    "**/.self-check-data": true,
+    "**/.smoke-data": true,
+    "**/.relcheck": true,
+    "**/.debug-data": true
+  },
   "search.exclude": {
     "**/.shots": true,
     "**/src-tauri/target": true,
     "**/.rustup": true,
     "**/.cargo": true,
-    "**/.tooling/mingw": true
+    "**/.tooling/mingw": true,
+    "**/release": true,
+    "**/.self-check-data": true,
+    "**/.smoke-data": true,
+    "**/.relcheck": true
   },
   "files.watcherExclude": {
     "**/src-tauri/target/**": true,
     "**/.rustup/**": true,
     "**/.cargo/**": true,
-    "**/.tooling/mingw/**": true
+    "**/.tooling/mingw/**": true,
+    "**/release/**": true,
+    "**/.shots/**": true,
+    "**/.self-check-data/**": true,
+    "**/.smoke-data/**": true,
+    "**/.relcheck/**": true,
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true
   },
+  "search.followSymlinks": false,
+
+  // 机械硬盘防卡顿：禁止打开 VS Code 瞬间 rust-analyzer 全盘预热依赖缓存与重复建 target 目录
+  "rust-analyzer.files.excludeDirs": [
+    ".rustup",
+    ".cargo",
+    ".tooling",
+    "release",
+    ".shots",
+    "ui",
+    "tests",
+    "packaging"
+  ],
+  "rust-analyzer.cachePriming.enable": false,
+  "rust-analyzer.cargo.targetDir": false,
 
   // 仓库里没有 ESLint 配置，别让编辑器提示"未找到配置"
   "eslint.enable": false

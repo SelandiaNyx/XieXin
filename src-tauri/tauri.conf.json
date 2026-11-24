@@ -14,8 +14,11 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
     "targets": ["nsis"],
+    "publisher": "HeartWrite",
+    "copyright": "Copyright (c) 2026 HeartWrite (GPL-3.0)",
+    "shortDescription": "HeartWrite - Modern Cross-Platform Novel Workbench",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -24,7 +27,16 @@
     ],
     "windows": {
       "webviewInstallMode": {
-        "type": "skip"
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false,
+        "compression": "lzma",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
       }
     }
   }
