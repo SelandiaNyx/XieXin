@@ -46,8 +46,40 @@ impl Store {
                 .map_err(|e| format!("无法初始化数据目录 {}: {e}", root.display()))?;
         }
         let settings_path = root.join("settings.json");
-        let settings: Settings = read_json(&settings_path)?.unwrap_or_default();
-        if !settings_path.exists() {
+        let mut settings: Settings = read_json(&settings_path)?.unwrap_or_default();
+        let mut settings_dirty = !settings_path.exists();
+        if settings.device_id.trim().is_empty() {
+            settings.device_id = uuid::Uuid::new_v4().to_string();
+            settings_dirty = true;
+        }
+        if settings.device_name.trim().is_empty() {
+            let host = std::env::var("COMPUTERNAME")
+                .or_else(|_| std::env::var("HOSTNAME"))
+                .ok()
+                .filter(|s| !s.trim().is_empty());
+            settings.device_name = host.unwrap_or_else(|| {
+                if cfg!(target_os = "android") {
+                    "Android 手机".into()
+                } else if cfg!(target_os = "windows") {
+                    "Windows 电脑".into()
+                } else if cfg!(target_os = "macos") {
+                    "Mac 电脑".into()
+                } else {
+                    "Linux 设备".into()
+                }
+            });
+            settings_dirty = true;
+        }
+        if settings.lan.pin.trim().is_empty() {
+            settings.lan.pin = crate::sync::lan::generate_pin();
+            settings_dirty = true;
+        }
+        if settings.ai.profiles.is_empty() {
+            settings.ai.profiles = default_ai_profiles();
+            settings.ai.active_profile_id = settings.ai.profiles[0].id.clone();
+            settings_dirty = true;
+        }
+        if settings_dirty {
             let _ = write_json_atomic(&settings_path, &settings);
         }
         let registry_path = root.join("books.json");
@@ -710,9 +742,24 @@ impl Store {
     }
 
     pub fn delete_book(&mut self, book_id: &str) -> Result<(), String> {
+        let mut tombstones = vec![
+            format!("books/{book_id}/book.json"),
+            format!("books/{book_id}/cards.json"),
+        ];
+        if let Ok(b) = self.book(book_id) {
+            if !b.cover_image.is_empty() {
+                tombstones.push(format!("books/{book_id}/{}", b.cover_image));
+            }
+            for v in &b.volumes {
+                for c in &v.chapters {
+                    tombstones.push(format!("content/{book_id}/{}.json", c.id));
+                }
+            }
+        }
         self.registry.books.retain(|b| b.id != book_id);
         self.move_to_trash(&format!("books/{book_id}"));
         self.move_to_trash(&format!("content/{book_id}"));
+        crate::sync::record_tombstone(&self.root, &tombstones);
         self.save_registry()?;
         if self.settings.last_book_id == book_id {
             self.settings.last_book_id.clear();
@@ -750,6 +797,37 @@ impl Store {
             let _ = fs::remove_file(self.root.join("books").join(book_id).join(&previous));
         }
         fs::write(self.cover_path(book_id, &ext), &bytes).map_err(|e| format!("保存封面失败：{e}"))?;
+        let snapshot = {
+            let book = self.book_mut(book_id)?;
+            book.cover_image = format!("cover.{ext}");
+            book.updated_at = now_ms();
+            book.clone()
+        };
+        self.save_book(&snapshot)?;
+        self.save_registry()?;
+        Ok(snapshot)
+    }
+
+    /// 设置封面（直接传入扩展名与原始字节，供移动端文件输入或剪贴板导入使用）。
+    pub fn set_book_cover_bytes(&mut self, book_id: &str, ext: &str, bytes: &[u8]) -> Result<BookMeta, String> {
+        let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+        if !crate::cover::ALLOWED_EXTS.contains(&ext.as_str()) {
+            return Err(format!("不支持的图片格式（支持 {}）", crate::cover::ALLOWED_EXTS.join(" / ")));
+        }
+        if bytes.is_empty() {
+            return Err("这张图片是空文件".into());
+        }
+        if bytes.len() as u64 > crate::cover::MAX_COVER_BYTES {
+            return Err(format!("图片太大了（上限 {}MB）", crate::cover::MAX_COVER_BYTES / 1024 / 1024));
+        }
+        if let Some(dir) = self.cover_path(book_id, &ext).parent() {
+            fs::create_dir_all(dir).map_err(|e| format!("无法创建封面目录：{e}"))?;
+        }
+        let previous = self.book(book_id).map(|b| b.cover_image).unwrap_or_default();
+        if !previous.is_empty() && previous != format!("cover.{ext}") {
+            let _ = fs::remove_file(self.root.join("books").join(book_id).join(&previous));
+        }
+        fs::write(self.cover_path(book_id, &ext), bytes).map_err(|e| format!("保存封面失败：{e}"))?;
         let snapshot = {
             let book = self.book_mut(book_id)?;
             book.cover_image = format!("cover.{ext}");
@@ -1120,11 +1198,21 @@ impl Store {
         )
     }
 
-    pub fn delete_version(&self, book_id: &str, chapter_id: &str, version_id: &str) -> Result<usize, String> {
+    pub fn delete_version(&mut self, book_id: &str, chapter_id: &str, version_id: &str) -> Result<usize, String> {
         let mut stored = self.read_content(book_id, chapter_id)?;
         stored.versions.retain(|v| v.id != version_id);
         let n = stored.versions.len();
         self.write_content(book_id, &stored)?;
+        if let Ok(book) = self.book_mut(book_id) {
+            for vol in book.volumes.iter_mut() {
+                if let Some(ch) = vol.chapters.iter_mut().find(|c| c.id == chapter_id) {
+                    ch.versions = n;
+                    break;
+                }
+            }
+            let snap = book.clone();
+            let _ = self.persist_structure(book_id, snap);
+        }
         Ok(n)
     }
 
@@ -1240,6 +1328,7 @@ impl Store {
                 .join(format!("{}_{}_{}.json", now_ms(), book_id, chapter_id));
             let _ = fs::rename(&p, trash);
         }
+        crate::sync::record_tombstone(&self.root, &[format!("content/{book_id}/{chapter_id}.json")]);
         Ok(())
     }
 
@@ -1262,13 +1351,16 @@ impl Store {
         };
         self.persist_structure(book_id, snapshot)?;
         if delete_chapters {
+            let mut tombs = Vec::new();
             for cid in &removed {
                 let p = self.chapter_path(book_id, cid);
                 if p.exists() {
                     let trash = self.root.join("trash").join(format!("{}_{}.json", now_ms(), cid));
                     let _ = fs::rename(&p, trash);
                 }
+                tombs.push(format!("content/{book_id}/{cid}.json"));
             }
+            crate::sync::record_tombstone(&self.root, &tombs);
         }
         Ok(removed)
     }

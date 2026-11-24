@@ -1,6 +1,7 @@
 //! 文字统计、中文数字、一键排版与章节切分等纯函数工具。
 
 use chrono::{Local, TimeZone};
+use serde::Serialize;
 
 pub const CJK_IDEOGRAPHS: &str = "\u{4E00}-\u{9FFF}";
 
@@ -200,6 +201,24 @@ fn is_heading_like(line: &str) -> bool {
         return true;
     }
     false
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormatReport {
+    pub content: String,
+    pub changed: bool,
+}
+
+pub fn smart_format_report(
+    text: &str,
+    rule: FormatRule,
+    chapter_title: Option<&str>,
+    ensure_title: bool,
+) -> FormatReport {
+    let content = smart_format(text, rule, chapter_title, ensure_title);
+    let changed = content != text;
+    FormatReport { content, changed }
 }
 
 /// 一键排版：返回整理后的正文。

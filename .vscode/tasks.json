@@ -48,8 +48,8 @@
       "command": "node tests/preview-server.cjs",
       "isBackground": true,
       "problemMatcher": {
+        "base": "$tsc-watch",
         "owner": "xiexin-preview",
-        "pattern": [{ "regexp": "^(.*)$", "message": 1 }],
         "background": {
           "activeOnStart": true,
           "beginsPattern": ".*",

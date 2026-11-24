@@ -36,7 +36,7 @@ export async function openHistory() {
   openModal({
     title: `历史版本 · ${ch ? ch.title : ''}`,
     width: 'wide',
-    body: `<div style="display:grid;grid-template-columns:300px 1fr;gap:14px">
+    body: `<div class="history-layout">
         <div class="version-list" id="versionList">${rows}</div>
         <div id="versionDetail" class="empty-note">选择左侧任一版本查看对比</div>
       </div>`,
@@ -106,7 +106,7 @@ export async function openHistory() {
 }
 
 function kindLabel(kind) {
-  return { auto: '自动', manual: '手动', restore: '回滚', import: '导入', current: '当前' }[kind] || kind;
+  return { auto: '自动', manual: '手动', restore: '回滚', import: '导入', conflict: '同步冲突', current: '当前' }[kind] || kind;
 }
 
 /** 逐行 LCS 差异，输出两侧 HTML。 */

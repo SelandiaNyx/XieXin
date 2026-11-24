@@ -1,10 +1,4 @@
-// 手机端交互：抽屉遮罩、触屏行内操作面板、移动端「更多」菜单。
-//
-// 布局本身全部交给 mobile.css（只靠 data-sidebar / data-inspector 这两个属性驱动），
-// 这里只补三件 CSS 做不到的事：
-//   1. 点遮罩、点章节、开弹层时把抽屉收起来；
-//   2. 触屏没有悬停，用行内「⋮」把上移 / 重命名 / 移动到其他卷 / 删除这些动作弹成底部面板；
-//   3. 顶栏「更多」菜单（窄屏放不下的搜索、快照、历史、导出、设置等）。
+// 手机端交互：抽屉遮罩、MD3 底部导航、触屏行内操作面板、移动端「更多」菜单与 Android 返回键。
 
 import { state, setState, subscribe } from './store.js';
 import { isNarrow, isTouch, onViewportChange } from './viewport.js';
@@ -32,6 +26,7 @@ export function initMobile() {
   buildScrim();
   buildSheet();
   bindMoreButton();
+  bindBottomNav();
   bindDelegates();
   bindEscape();
   bindModalGuard();
@@ -41,7 +36,7 @@ export function initMobile() {
   prevInspector = state.inspectorOpen;
   subscribe(onStateChange);
   syncScrim();
-  // 视口在桌面/手机之间来回切换时（旋转、分屏、折叠屏），遮罩跟着重算
+  syncBottomNav();
   onViewportChange(() => setState({}));
   void initBackButton();
 }
@@ -61,6 +56,50 @@ function onStateChange(s) {
   prevSidebar = s.sidebarOpen;
   prevInspector = s.inspectorOpen;
   syncScrim();
+  syncBottomNav();
+}
+
+// ------------------------------------------------------------------ 底部导航（MD3）
+
+function bindBottomNav() {
+  const nav = document.getElementById('mobileNav');
+  if (!nav) return;
+  nav.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-mnav]');
+    if (!btn) return;
+    const dest = btn.dataset.mnav;
+    switch (dest) {
+      case 'toc':
+        setState({ sidebarOpen: !state.sidebarOpen, inspectorOpen: false });
+        break;
+      case 'write':
+        setState({ sidebarOpen: false, inspectorOpen: false });
+        break;
+      case 'ai':
+        setState({ sidebarOpen: false, inspectorOpen: true, inspectorPane: 'ai' });
+        break;
+      case 'cards':
+        setState({ sidebarOpen: false, inspectorOpen: true, inspectorPane: 'cards' });
+        break;
+      case 'sync':
+        closePanels();
+        clickId('syncBtn');
+        break;
+      default:
+        break;
+    }
+  });
+}
+
+function syncBottomNav() {
+  const nav = document.getElementById('mobileNav');
+  if (!nav) return;
+  let active = 'write';
+  if (state.sidebarOpen) active = 'toc';
+  else if (state.inspectorOpen) active = state.inspectorPane === 'ai' ? 'ai' : 'cards';
+  nav.querySelectorAll('[data-mnav]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.mnav === active);
+  });
 }
 
 // ------------------------------------------------------------------ 遮罩
@@ -72,7 +111,6 @@ function buildScrim() {
   document.getElementById('app').appendChild(scrim);
 }
 
-/** 抽屉开着的时候显示遮罩；弹层自己带背景，不叠加。 */
 function syncScrim() {
   if (!scrim) return;
   const open = isNarrow() && (state.sidebarOpen || state.inspectorOpen) && !state.focus && !isModalOpen();
@@ -89,8 +127,6 @@ function isModalOpen() {
   return Boolean(overlay && !overlay.hidden);
 }
 
-/** 打开弹层时先把抽屉收起来，避免"弹层下面还压着一个抽屉"。
- *  只在窄屏这么做：桌面端的左右两栏是常驻列，开个弹层就被收掉会很突兀。 */
 function bindModalGuard() {
   const overlay = document.getElementById('overlay');
   if (!overlay || typeof MutationObserver === 'undefined') return;
@@ -153,8 +189,6 @@ export function closeSheet() {
   }, 200);
 }
 
-/** 目录/卷行上的「⋮」：把该行隐藏的动作按钮弹成面板（点面板 = 点原按钮）。
- *  触屏拖不了章节，所以额外给章节加一条「移动到其他卷…」。 */
 function openRowActions(row) {
   if (!row) return;
   const isVolume = row.classList.contains('volume-row');
@@ -169,7 +203,6 @@ function openRowActions(row) {
     run: () => btn.click(),
   }));
   if (!isVolume) {
-    // 放在删除之前：破坏性操作永远排最后
     const at = items.findIndex((item) => item.danger);
     items.splice(at < 0 ? items.length : at, 0, {
       label: '移动到其他卷…',
@@ -197,18 +230,20 @@ function bindMoreButton() {
   btn.addEventListener('click', () => {
     if (sheetOpen()) { closeSheet(); return; }
     closePanels();
-    openSheet('更多', [
+    openSheet('更多操作', [
+      { label: '跨端同步（局域网 / WebDAV）', run: () => clickId('syncBtn') },
+      { label: '✨ 写心酱 AI 助手', run: () => setState({ inspectorOpen: true, sidebarOpen: false, inspectorPane: 'ai' }) },
       { label: '全文搜索', run: () => clickId('quickSearch') },
       { label: '创建快照', run: () => clickId('snapshotBtn') },
       { label: '历史版本', run: () => clickId('historyBtn') },
-      { label: '导出…', run: () => clickId('exportBtn') },
-      { label: '素材卡片', run: () => clickId('toggleInspector') },
+      { label: '导出电子书 / 备份…', run: () => clickId('exportBtn') },
+      { label: '素材卡片', run: () => setState({ inspectorOpen: true, sidebarOpen: false, inspectorPane: 'cards' }) },
       { label: '章节大纲', run: () => clickChip('outline') },
       { label: '番茄钟', run: () => clickChip('pomodoro') },
-      // 进专注模式后正文工具条会被收起来，所以退出入口留在这里
+      { label: state.previewMode ? '退出阅读预览' : '阅读预览', run: () => clickId('togglePreviewBtn') },
       { label: state.focus ? '退出专注模式' : '专注模式', run: () => clickId('focusBtn') },
-      { label: '外观与偏好', run: () => clickId('openSettings') },
-      { label: '快捷键说明', run: () => clickChip('help') },
+      { label: '外观、AI 与偏好设置', run: () => clickId('openSettings') },
+      { label: '快捷键与说明', run: () => clickChip('help') },
     ]);
   });
 }
@@ -216,7 +251,6 @@ function bindMoreButton() {
 // ------------------------------------------------------------------ 事件
 
 function bindDelegates() {
-  // 捕获阶段：先于 sidebar.js 的目录点击处理，保证抽屉在切章动画前就开始收起
   document.addEventListener('click', (e) => {
     const target = e.target instanceof Element ? e.target : null;
     if (!target) return;
@@ -226,12 +260,9 @@ function bindDelegates() {
       openRowActions(more.closest('.chapter-row, .volume-row'));
       return;
     }
-    // 抽屉模式下点章节 = 选好就收起抽屉，把屏幕让给正文；
-    // 平板那种"侧栏本来就是常驻列"的布局不动它，否则一点章节目录就没了
     if (isNarrow() && target.closest('.chapter-row') && !target.closest('.tiny-btn')) closePanels();
   }, true);
 
-  // 触屏没有悬停，桌面端那套 HTML5 拖拽在手机上只会添乱（sidebar.js 会按 isTouch 关掉 draggable）
   document.addEventListener('dragstart', (e) => {
     if (isTouch()) e.preventDefault();
   }, true);
@@ -254,13 +285,6 @@ function bindEscape() {
 
 // ------------------------------------------------------------------ Android 返回键
 
-/**
- * 返回键的分层消费顺序（从最上层开始）：
- * 底部面板 → 弹层 → 抽屉 → 专注模式 → 查找条 → 都没有时关窗口。
- * 最后一档用 close()，走的是应用原有的保存守卫（等保存成功再关），不会丢稿。
- *
- * @returns {boolean} 是否消费掉了这次返回
- */
 function consumeBack() {
   if (sheetOpen()) { closeSheet(); return true; }
   if (isModalOpen()) { closeModal(); return true; }
@@ -280,14 +304,6 @@ function consumeBack() {
   return false;
 }
 
-/**
- * 接 Android/iOS 的硬件返回键。
- *
- * Tauri 核心自带这个能力（mobile/android 的 AppPlugin）：JS 一旦监听 `back-button`，
- * 返回键就不再由系统直接退出应用，而是回调到这里；没人监听时才走默认行为。
- * 所以最后一档必须自己关窗口，否则用户按返回键会"没反应"。
- * 桌面端不会触发这个事件，也就不用注册。
- */
 async function initBackButton() {
   const tauri = window.__TAURI__;
   if (!/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;

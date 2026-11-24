@@ -1,0 +1,415 @@
+/* ==========================================================================
+   写心 HeartWrite · Material Design 3 + 二次元主题设计令牌
+   完整 MD3 色彩角色系统（Primary / Secondary / Tertiary / Surface 阶梯）
+   ========================================================================== */
+
+:root,
+html[data-theme="sakura"] {
+  color-scheme: light;
+
+  /* MD3 色彩角色：樱花物语（默认 · 二次元亮色 MD3） */
+  --md-primary: #c0396f;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #ffd8e6;
+  --md-on-primary-container: #3e001f;
+
+  --md-secondary: #755664;
+  --md-on-secondary: #ffffff;
+  --md-secondary-container: #ffe0ec;
+  --md-on-secondary-container: #2b151f;
+
+  --md-tertiary: #4e5fa6;
+  --md-on-tertiary: #ffffff;
+  --md-tertiary-container: #dee2ff;
+  --md-on-tertiary-container: #061856;
+
+  --md-surface: #fff8fa;
+  --md-surface-dim: #f3e4ea;
+  --md-surface-container-lowest: #ffffff;
+  --md-surface-container-low: #fdf1f5;
+  --md-surface-container: #f9e8ef;
+  --md-surface-container-high: #f4dde6;
+  --md-surface-container-highest: #eed4df;
+
+  --md-on-surface: #22191d;
+  --md-on-surface-variant: #56434c;
+  --md-outline: #89717c;
+  --md-outline-variant: #e5ced8;
+
+  --md-error: #ba1a1a;
+  --md-error-container: #ffdad6;
+  --md-ok: #1b7f5a;
+  --md-ok-container: #d2f5e6;
+  --md-warn: #b4690e;
+  --md-warn-container: #ffebcc;
+
+  /* 二次元氛围装饰渐变 */
+  --anime-wash: radial-gradient(ellipse 68% 45% at 100% 0%, rgba(255, 182, 212, 0.24), transparent 65%),
+                radial-gradient(ellipse 52% 40% at 0% 100%, rgba(188, 198, 255, 0.18), transparent 60%);
+  --anime-glow: linear-gradient(135deg, #d84b82 0%, #7d68d6 100%);
+  --anime-accent-soft: rgba(192, 57, 111, 0.08);
+  --paper: #ffffff;
+
+  /* 语义别名（兼容既有组件变量） */
+  --bg: var(--md-surface);
+  --panel: var(--md-surface-container-low);
+  --panel-2: var(--md-surface-container-lowest);
+  --ink: var(--md-on-surface);
+  --ink-soft: var(--md-on-surface-variant);
+  --ink-faint: var(--md-outline);
+  --line: var(--md-outline-variant);
+  --line-strong: color-mix(in srgb, var(--md-outline) 45%, var(--md-outline-variant));
+  --accent: var(--md-primary);
+  --accent-soft: var(--md-primary-container);
+  --accent-ink: var(--md-on-primary);
+  --danger: var(--md-error);
+  --ok: var(--md-ok);
+  --warn: var(--md-warn);
+
+  /* MD3 阴影与圆角阶梯 */
+  --md-elev-1: 0 1px 3px rgba(62, 0, 31, 0.06), 0 1px 2px rgba(62, 0, 31, 0.04);
+  --md-elev-2: 0 4px 14px rgba(62, 0, 31, 0.09), 0 1px 3px rgba(62, 0, 31, 0.05);
+  --md-elev-3: 0 16px 40px rgba(48, 10, 32, 0.16), 0 4px 12px rgba(48, 10, 32, 0.08);
+  --shadow: var(--md-elev-3);
+
+  --radius-xs: 8px;
+  --radius-sm: 12px;
+  --radius: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 28px;
+  --radius-pill: 9999px;
+
+  /* 字体与排版 */
+  --font-ui: "HarmonyOS Sans SC", "MiSans", "PingFang SC", "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  --font-body: "霞鹜文楷", "LXGW WenKai", "Source Han Serif SC", "思源宋体", "Songti SC", "宋体", serif;
+  --font-size: 18px;
+  --line-height: 1.95;
+  --letter-spacing: 0.02em;
+  --editor-width: 860px;
+
+  /* 布局尺寸 */
+  --topbar-h: 62px;
+  --left-width: 268px;
+  --right-width: 336px;
+
+  /* MD3 Expressive 动效令牌 */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-spring: cubic-bezier(0.34, 1.32, 0.64, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 300ms;
+  --dur-4: 420ms;
+}
+
+/* --------------------------------------------------------------------------
+   星夜物语（二次元暗色 MD3）
+   -------------------------------------------------------------------------- */
+html[data-theme="starlight"],
+html[data-theme="dark"],
+html[data-theme="md3-dark"] {
+  color-scheme: dark;
+
+  --md-primary: #b6c4ff;
+  --md-on-primary: #14235f;
+  --md-primary-container: #2e3d7c;
+  --md-on-primary-container: #dde3ff;
+
+  --md-secondary: #c5c4dd;
+  --md-on-secondary: #2d2d42;
+  --md-secondary-container: #434459;
+  --md-on-secondary-container: #e2e0f9;
+
+  --md-tertiary: #ffb0ce;
+  --md-on-tertiary: #541734;
+  --md-tertiary-container: #6e2d4b;
+  --md-on-tertiary-container: #ffd8e6;
+
+  --md-surface: #0f1220;
+  --md-surface-dim: #0a0c16;
+  --md-surface-container-lowest: #141828;
+  --md-surface-container-low: #171b2d;
+  --md-surface-container: #1d2236;
+  --md-surface-container-high: #262c44;
+  --md-surface-container-highest: #303754;
+
+  --md-on-surface: #e6e7f4;
+  --md-on-surface-variant: #b8bbd1;
+  --md-outline: #8589a6;
+  --md-outline-variant: #2f3550;
+
+  --md-error: #ffb4ab;
+  --md-error-container: #690005;
+  --md-ok: #7be0b4;
+  --md-ok-container: #164734;
+  --md-warn: #f8c673;
+  --md-warn-container: #4c3309;
+
+  --anime-wash: radial-gradient(ellipse 65% 45% at 95% 0%, rgba(182, 196, 255, 0.14), transparent 65%),
+                radial-gradient(ellipse 50% 40% at 5% 100%, rgba(255, 176, 206, 0.10), transparent 60%);
+  --anime-glow: linear-gradient(135deg, #8aa2ff 0%, #f18ab8 100%);
+  --anime-accent-soft: rgba(182, 196, 255, 0.10);
+  --paper: #141827;
+
+  --md-elev-1: 0 2px 6px rgba(0, 0, 0, 0.34);
+  --md-elev-2: 0 6px 18px rgba(0, 0, 0, 0.45);
+  --md-elev-3: 0 18px 46px rgba(0, 0, 0, 0.65);
+}
+
+/* --------------------------------------------------------------------------
+   苍蓝初音（青葱澄澈二次元 MD3）
+   -------------------------------------------------------------------------- */
+html[data-theme="miku"],
+html[data-theme="forest"] {
+  color-scheme: light;
+
+  --md-primary: #007882;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #bbf2f5;
+  --md-on-primary-container: #00272b;
+
+  --md-secondary: #496366;
+  --md-on-secondary: #ffffff;
+  --md-secondary-container: #cde7ea;
+  --md-on-secondary-container: #051f22;
+
+  --md-tertiary: #c23f73;
+  --md-on-tertiary: #ffffff;
+  --md-tertiary-container: #ffd8e4;
+  --md-on-tertiary-container: #3d001e;
+
+  --md-surface: #f2fbfb;
+  --md-surface-dim: #dff0f1;
+  --md-surface-container-lowest: #ffffff;
+  --md-surface-container-low: #eaf6f6;
+  --md-surface-container: #e1f0f1;
+  --md-surface-container-high: #d6e9ea;
+  --md-surface-container-highest: #cce2e4;
+
+  --md-on-surface: #152122;
+  --md-on-surface-variant: #415557;
+  --md-outline: #708588;
+  --md-outline-variant: #c3dcde;
+
+  --anime-wash: radial-gradient(ellipse 65% 45% at 100% 0%, rgba(57, 197, 187, 0.18), transparent 65%),
+                radial-gradient(ellipse 50% 40% at 0% 100%, rgba(255, 160, 198, 0.14), transparent 60%);
+  --anime-glow: linear-gradient(135deg, #009fa8 0%, #d45285 100%);
+  --anime-accent-soft: rgba(0, 120, 130, 0.08);
+  --paper: #ffffff;
+}
+
+/* --------------------------------------------------------------------------
+   黄昏校园（温暖夕阳二次元 MD3）
+   -------------------------------------------------------------------------- */
+html[data-theme="sunset"] {
+  color-scheme: light;
+
+  --md-primary: #b65319;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #ffdec8;
+  --md-on-primary-container: #3b1400;
+
+  --md-secondary: #785746;
+  --md-on-secondary: #ffffff;
+  --md-secondary-container: #ffe0cf;
+  --md-on-secondary-container: #2d1609;
+
+  --md-tertiary: #6a539c;
+  --md-on-tertiary: #ffffff;
+  --md-tertiary-container: #eadcff;
+  --md-on-tertiary-container: #240d54;
+
+  --md-surface: #fff8f3;
+  --md-surface-dim: #f5e6db;
+  --md-surface-container-lowest: #ffffff;
+  --md-surface-container-low: #fcf1e8;
+  --md-surface-container: #f8e8dc;
+  --md-surface-container-high: #f2dfd0;
+  --md-surface-container-highest: #ebd5c4;
+
+  --md-on-surface: #241a14;
+  --md-on-surface-variant: #57453a;
+  --md-outline: #897366;
+  --md-outline-variant: #e5cfc1;
+
+  --anime-wash: radial-gradient(ellipse 70% 45% at 100% 0%, rgba(255, 174, 112, 0.22), transparent 65%),
+                radial-gradient(ellipse 50% 40% at 0% 100%, rgba(169, 138, 224, 0.16), transparent 60%);
+  --anime-glow: linear-gradient(135deg, #d86d2a 0%, #8663bd 100%);
+  --anime-accent-soft: rgba(182, 83, 25, 0.08);
+  --paper: #fffdf9;
+}
+
+/* --------------------------------------------------------------------------
+   紫藤幻境（MD3 基线紫 · 轻小说风）
+   -------------------------------------------------------------------------- */
+html[data-theme="wisteria"],
+html[data-theme="md3"],
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --md-primary: #6750a4;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #eaddff;
+  --md-on-primary-container: #21005d;
+
+  --md-secondary: #625b71;
+  --md-on-secondary: #ffffff;
+  --md-secondary-container: #e8def8;
+  --md-on-secondary-container: #1d192b;
+
+  --md-tertiary: #a6436f;
+  --md-on-tertiary: #ffffff;
+  --md-tertiary-container: #ffd8e6;
+  --md-on-tertiary-container: #3c001f;
+
+  --md-surface: #fef7ff;
+  --md-surface-dim: #eee6f4;
+  --md-surface-container-lowest: #ffffff;
+  --md-surface-container-low: #f7f2fa;
+  --md-surface-container: #f3edf7;
+  --md-surface-container-high: #ece6f0;
+  --md-surface-container-highest: #e6e0e9;
+
+  --md-on-surface: #1d1b20;
+  --md-on-surface-variant: #49454f;
+  --md-outline: #79747e;
+  --md-outline-variant: #d9d0e2;
+
+  --anime-wash: radial-gradient(ellipse 65% 45% at 100% 0%, rgba(190, 162, 255, 0.22), transparent 65%),
+                radial-gradient(ellipse 50% 40% at 0% 100%, rgba(255, 184, 214, 0.16), transparent 60%);
+  --anime-glow: linear-gradient(135deg, #7459bd 0%, #c85386 100%);
+  --anime-accent-soft: rgba(103, 80, 164, 0.08);
+  --paper: #ffffff;
+}
+
+/* --------------------------------------------------------------------------
+   墨染月夜（极简暗黑护眼 MD3）
+   -------------------------------------------------------------------------- */
+html[data-theme="moonlight-ink"] {
+  color-scheme: dark;
+
+  --md-primary: #82d9be;
+  --md-on-primary: #00382b;
+  --md-primary-container: #135141;
+  --md-on-primary-container: #aaf3db;
+
+  --md-secondary: #b1ccc3;
+  --md-on-secondary: #1c352d;
+  --md-secondary-container: #334b43;
+  --md-on-secondary-container: #cde8de;
+
+  --md-tertiary: #c9bfff;
+  --md-on-tertiary: #2f235f;
+  --md-tertiary-container: #463b78;
+  --md-on-tertiary-container: #e6e0ff;
+
+  --md-surface: #111515;
+  --md-surface-dim: #0c0f0f;
+  --md-surface-container-lowest: #151a19;
+  --md-surface-container-low: #181e1d;
+  --md-surface-container: #1e2524;
+  --md-surface-container-high: #262f2d;
+  --md-surface-container-highest: #303a38;
+
+  --md-on-surface: #e2e8e6;
+  --md-on-surface-variant: #adbab4;
+  --md-outline: #7c8b85;
+  --md-outline-variant: #2e3835;
+
+  --md-error: #ffb4ab;
+  --md-error-container: #690005;
+  --md-ok: #82d9be;
+  --md-ok-container: #134a39;
+  --md-warn: #f4c673;
+  --md-warn-container: #4d350a;
+
+  --anime-wash: radial-gradient(ellipse 65% 45% at 95% 0%, rgba(130, 217, 190, 0.11), transparent 65%),
+                radial-gradient(ellipse 50% 40% at 5% 100%, rgba(201, 191, 255, 0.09), transparent 60%);
+  --anime-glow: linear-gradient(135deg, #54bfa0 0%, #9887e8 100%);
+  --anime-accent-soft: rgba(130, 217, 190, 0.09);
+  --paper: #161c1b;
+
+  --md-elev-1: 0 2px 6px rgba(0, 0, 0, 0.35);
+  --md-elev-2: 0 6px 18px rgba(0, 0, 0, 0.45);
+  --md-elev-3: 0 18px 46px rgba(0, 0, 0, 0.65);
+}
+
+/* --------------------------------------------------------------------------
+   羊皮书卷（古典护眼）
+   -------------------------------------------------------------------------- */
+html[data-theme="sepia"] {
+  color-scheme: light;
+
+  --md-primary: #8e562c;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #f5dfca;
+  --md-on-primary-container: #341803;
+
+  --md-secondary: #705b49;
+  --md-on-secondary: #ffffff;
+  --md-secondary-container: #f1e3d2;
+  --md-on-secondary-container: #291c11;
+
+  --md-tertiary: #5d6442;
+  --md-on-tertiary: #ffffff;
+  --md-tertiary-container: #e2e9bf;
+  --md-on-tertiary-container: #1a2007;
+
+  --md-surface: #efe5d4;
+  --md-surface-dim: #e5d8c2;
+  --md-surface-container-lowest: #fbf5ea;
+  --md-surface-container-low: #f5ecdc;
+  --md-surface-container: #efe3cf;
+  --md-surface-container-high: #e7d8c0;
+  --md-surface-container-highest: #dfceb2;
+
+  --md-on-surface: #362c22;
+  --md-on-surface-variant: #655748;
+  --md-outline: #8f7e6b;
+  --md-outline-variant: #d9c8ae;
+
+  --anime-wash: none;
+  --anime-glow: linear-gradient(135deg, #a2673b 0%, #6d7b4b 100%);
+  --anime-accent-soft: rgba(142, 86, 44, 0.08);
+  --paper: #fbf5ea;
+}
+
+/* --------------------------------------------------------------------------
+   极简黑白（纯粹文字工作台）
+   -------------------------------------------------------------------------- */
+html[data-theme="mono"] {
+  color-scheme: light;
+
+  --md-primary: #1a1a1d;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #e6e6eb;
+  --md-on-primary-container: #111114;
+
+  --md-secondary: #52525b;
+  --md-on-secondary: #ffffff;
+  --md-secondary-container: #ebebef;
+  --md-on-secondary-container: #18181b;
+
+  --md-tertiary: #3f3f46;
+  --md-on-tertiary: #ffffff;
+  --md-tertiary-container: #e4e4e7;
+  --md-on-tertiary-container: #18181b;
+
+  --md-surface: #f5f5f7;
+  --md-surface-dim: #e8e8ec;
+  --md-surface-container-lowest: #ffffff;
+  --md-surface-container-low: #fafafa;
+  --md-surface-container: #f0f0f3;
+  --md-surface-container-high: #e7e7ec;
+  --md-surface-container-highest: #dcdce2;
+
+  --md-on-surface: #141416;
+  --md-on-surface-variant: #4a4a52;
+  --md-outline: #7c7c86;
+  --md-outline-variant: #dadadf;
+
+  --anime-wash: none;
+  --anime-glow: linear-gradient(135deg, #27272a 0%, #52525b 100%);
+  --anime-accent-soft: rgba(26, 26, 29, 0.06);
+  --paper: #ffffff;
+}

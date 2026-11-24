@@ -231,6 +231,72 @@ test('书架与资料的封面图片', { skip: support.ok ? false : support.reas
           assert.equal(again.previewThumb, true, '选完图片应该能看到预览');
           assert.equal(again.emblemImg, true, '保存后侧栏徽标应该换成封面图');
         });
+
+        // ---------------------------------------------- MD3 二次元主题 / 同步中心 / AI 写心酱 / 阅读预览
+        await t.test('MD3 二次元主题、跨端同步中心（LAN+WebDAV）与写心酱 AI 助手闭环', async () => {
+          const studio = await page.evaluate(`(async () => {
+            // 1. 默认应为二次元樱花 MD3 主题
+            const initTheme = document.documentElement.getAttribute('data-theme');
+
+            // 2. 打开设置切到星夜物语主题卡片并保存
+            document.getElementById('openSettings').click();
+            await new Promise((r) => setTimeout(r, 450));
+            const themeCards = document.querySelectorAll('[data-theme-pick]').length;
+            document.querySelector('[data-theme-pick="starlight"]').click();
+            document.querySelector('.modal-foot [data-role="save"]').click();
+            await new Promise((r) => setTimeout(r, 500));
+            const nextTheme = document.documentElement.getAttribute('data-theme');
+
+            // 3. 打开同步中心：启动局域网服务生成二维码 + 扫描设备 + 切换 WebDAV 预设
+            document.getElementById('syncBtn').click();
+            await new Promise((r) => setTimeout(r, 450));
+            document.getElementById('lanToggleBtn').click();
+            await new Promise((r) => setTimeout(r, 450));
+            const hasQrSvg = !!document.querySelector('.qr-box svg path');
+            document.getElementById('lanScanBtn').click();
+            await new Promise((r) => setTimeout(r, 450));
+            const peerCount = document.querySelectorAll('.peer-row').length;
+            document.querySelector('#syncTabs [data-tab="webdav"]').click();
+            await new Promise((r) => setTimeout(r, 250));
+            const davPresets = document.querySelectorAll('#davPresets [data-preset]').length;
+            document.getElementById('modalClose').click();
+            await new Promise((r) => setTimeout(r, 400));
+
+            // 4. 切换右侧到 ✨ AI 写心酱并触发智能续写（验证流式回复 + 思考折叠 + 插入正文）
+            document.querySelector('#inspectorModeTabs [data-pane="ai"]').click();
+            await new Promise((r) => setTimeout(r, 250));
+            const beforeLen = document.getElementById('editor').value.length;
+            document.querySelector('#aiSkills [data-skill="continue"]').click();
+            await new Promise((r) => setTimeout(r, 600));
+            const hasReasoning = !!document.querySelector('.ai-reasoning');
+            const hasReply = document.querySelectorAll('.ai-msg.assistant .ai-bubble').length > 0;
+            const insertBtn = document.querySelector('[data-ai-act="insert"]');
+            if (insertBtn) insertBtn.click();
+            await new Promise((r) => setTimeout(r, 200));
+            const afterLen = document.getElementById('editor').value.length;
+
+            // 5. 阅读预览模式切换
+            document.getElementById('togglePreviewBtn').click();
+            await new Promise((r) => setTimeout(r, 200));
+            const previewShown = !document.getElementById('readingPreview').hidden;
+            document.getElementById('togglePreviewBtn').click();
+
+            return {
+              initTheme, themeCards, nextTheme, hasQrSvg, peerCount, davPresets,
+              hasReasoning, hasReply, inserted: afterLen > beforeLen, previewShown,
+            };
+          })()`);
+          assert.equal(studio.initTheme, 'sakura', '默认主题应为樱花物语 sakura');
+          assert.ok(studio.themeCards >= 8, `应提供 8 套 MD3 主题卡片，实际 ${studio.themeCards}`);
+          assert.equal(studio.nextTheme, 'starlight', '点击星夜物语色卡保存后应切换到 starlight');
+          assert.equal(studio.hasQrSvg, true, '开启局域网同步服务后应生成内联 SVG 配对二维码');
+          assert.equal(studio.peerCount, 1, '扫描附近设备应列出局域网同伴');
+          assert.equal(studio.davPresets, 4, 'WebDAV 页签应提供 4 个快捷预设');
+          assert.equal(studio.hasReasoning, true, 'AI 回复应展示可折叠的思考过程');
+          assert.equal(studio.hasReply, true, 'AI 写心酱应渲染助手回复气泡');
+          assert.equal(studio.inserted, true, '点「插入光标」应把 AI 生成正文写入编辑器');
+          assert.equal(studio.previewShown, true, '阅读预览模式应正常切换显示');
+        });
       } finally {
         await page.close();
       }

@@ -1,0 +1,530 @@
+/* ==========================================================================
+   基础复位、MD3 通用控件（Filled / Tonal / Outlined / Icon / Chips / Switch）
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--md-surface);
+  color: var(--md-on-surface);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+button:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--md-primary) 24%, transparent);
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  background: var(--md-surface-container-high);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  font-family: var(--font-ui);
+  color: var(--md-on-surface-variant);
+}
+
+.ui-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  vertical-align: middle;
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--md-outline) 35%, transparent);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--md-outline) 60%, transparent);
+}
+
+/* 首屏动效守卫与减少动态偏好 */
+.app.no-anim,
+.app.no-anim * {
+  transition: none !important;
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   MD3 按钮家族
+   -------------------------------------------------------------------------- */
+
+.primary,
+.mini,
+.tonal-btn,
+.icon-btn,
+.text-action,
+.chip,
+.status-chip,
+.tab {
+  white-space: nowrap;
+  flex: none;
+  transition: background var(--dur-1) var(--ease-out),
+              color var(--dur-1) var(--ease-out),
+              border-color var(--dur-1) var(--ease-out),
+              box-shadow var(--dur-1) var(--ease-out),
+              transform var(--dur-1) var(--ease-out);
+}
+
+/* MD3 Filled Button */
+.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 18px;
+  border-radius: var(--radius-pill);
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--md-elev-1);
+}
+.primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  box-shadow: var(--md-elev-2);
+}
+.primary:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.primary.ghost {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  box-shadow: none;
+}
+.primary.danger {
+  background: var(--md-error);
+  color: #ffffff;
+}
+
+/* MD3 Outlined / Tonal Pill Button */
+.mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius-pill);
+  background: var(--md-surface-container-lowest);
+  border: 1px solid var(--md-outline-variant);
+  color: var(--md-on-surface-variant);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.mini:hover:not(:disabled) {
+  background: var(--md-primary-container);
+  border-color: color-mix(in srgb, var(--md-primary) 40%, transparent);
+  color: var(--md-on-primary-container);
+}
+.mini:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.mini.on,
+.mini.tonal {
+  background: var(--md-secondary-container);
+  border-color: transparent;
+  color: var(--md-on-secondary-container);
+  font-weight: 600;
+}
+.mini.accent-tonal {
+  background: var(--md-tertiary-container);
+  border-color: transparent;
+  color: var(--md-on-tertiary-container);
+  font-weight: 600;
+}
+
+/* MD3 Icon Button */
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  color: var(--md-on-surface-variant);
+  font-size: 15px;
+}
+.icon-btn:hover:not(:disabled) {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+}
+.icon-btn:active:not(:disabled) {
+  transform: scale(0.93);
+}
+.icon-btn.active {
+  background: var(--md-primary-container);
+  color: var(--md-primary);
+}
+
+/* Text Action Button */
+.text-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 11px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--md-on-surface-variant);
+}
+.text-action .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+.text-action:hover:not(:disabled),
+.text-action[aria-pressed="true"] {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+}
+
+/* --------------------------------------------------------------------------
+   MD3 表单控件与开关
+   -------------------------------------------------------------------------- */
+
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  height: 38px;
+  background: var(--md-surface-container-highest);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  transition: background var(--dur-1), border-color var(--dur-1), box-shadow var(--dur-1);
+}
+.search-field:focus-within {
+  background: var(--md-surface-container-lowest);
+  border-color: var(--md-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--md-primary) 16%, transparent);
+}
+.search-field > .ui-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--md-outline);
+}
+.search-field input {
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: 0;
+  font-size: 12.5px;
+  color: var(--md-on-surface);
+}
+.search-field input::placeholder {
+  color: var(--md-outline);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.form-grid.one {
+  grid-template-columns: 1fr;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field.full {
+  grid-column: 1 / -1;
+}
+.field > label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--md-on-surface-variant);
+}
+.field input[type="text"],
+.field input[type="password"],
+.field input[type="url"],
+.field input[type="number"],
+.field input[type="search"],
+.field select,
+.field textarea {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container-lowest);
+  color: var(--md-on-surface);
+  transition: border-color var(--dur-1), box-shadow var(--dur-1);
+}
+.field textarea {
+  resize: vertical;
+  min-height: 76px;
+  line-height: 1.65;
+}
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: var(--md-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--md-primary) 15%, transparent);
+}
+.field .hint {
+  font-size: 11px;
+  color: var(--md-outline);
+  line-height: 1.55;
+}
+
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.range-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--md-primary);
+}
+.range-row .val {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--md-primary);
+  min-width: 48px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* MD3 Switch */
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 13px;
+}
+.switch {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  flex: none;
+  cursor: pointer;
+}
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch i {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-pill);
+  background: var(--md-surface-container-highest);
+  border: 1.5px solid var(--md-outline);
+  transition: background var(--dur-2) var(--ease-out), border-color var(--dur-2);
+}
+.switch i::after {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--md-outline);
+  top: 3.5px;
+  left: 4px;
+  transition: transform var(--dur-2) var(--ease-spring), background var(--dur-2), width var(--dur-1), height var(--dur-1);
+}
+.switch input:checked + i {
+  background: var(--md-primary);
+  border-color: var(--md-primary);
+}
+.switch input:checked + i::after {
+  width: 20px;
+  height: 20px;
+  top: 1.5px;
+  background: var(--md-on-primary);
+  transform: translateX(18px);
+}
+
+/* 通用 KV 与区块标题 */
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--md-primary);
+  margin: 18px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--md-outline-variant);
+}
+.section-title:first-child {
+  margin-top: 0;
+}
+
+.kv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--md-surface-container-low);
+  border: 1px solid var(--md-outline-variant);
+}
+.kv {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 12.5px;
+}
+.kv .k {
+  color: var(--md-outline);
+  flex: none;
+}
+
+.empty-note {
+  text-align: center;
+  color: var(--md-outline);
+  font-size: 12.5px;
+  padding: 28px 14px;
+  line-height: 1.8;
+}
+
+.link {
+  color: var(--md-primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.link:hover {
+  text-decoration: underline;
+}
+
+/* --------------------------------------------------------------------------
+   MD3 提示条 Snackbar / Toasts
+   -------------------------------------------------------------------------- */
+.toasts {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 95;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  padding: 11px 16px;
+  border-radius: var(--radius);
+  background: var(--md-surface-container-lowest);
+  border: 1px solid var(--md-outline-variant);
+  border-left: 4px solid var(--md-primary);
+  box-shadow: var(--md-elev-2);
+  font-size: 13px;
+  font-weight: 500;
+  max-width: 380px;
+  animation: toastIn var(--dur-2) var(--ease-out);
+}
+.toast.err {
+  border-left-color: var(--md-error);
+}
+.toast.ok {
+  border-left-color: var(--md-ok);
+}
+.toast.warn {
+  border-left-color: var(--md-warn);
+}
+.toast small {
+  display: block;
+  color: var(--md-on-surface-variant);
+  font-size: 11.5px;
+  font-weight: 400;
+  margin-top: 3px;
+  word-break: break-all;
+}
+.toast.leaving {
+  animation: toastOut var(--dur-2) var(--ease-in-out) forwards;
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes toastOut {
+  to { opacity: 0; transform: translateY(6px) scale(0.97); }
+}
+
+/* 二次元氛围开关 */
+html[data-anime="off"] .anime-ornament,
+html[data-anime="off"] .anime-petal-bg {
+  display: none !important;
+}
+html[data-anime="off"] .main {
+  background-image: none !important;
+}

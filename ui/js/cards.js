@@ -97,7 +97,7 @@ export function activeCard() {
   return state.cards.find((c) => c.id === state.activeCardId) || null;
 }
 
-async function reloadCards() {
+export async function reloadCards() {
   if (!state.book) return;
   const cards = await api.listCards(state.book.id);
   setState({ cards });

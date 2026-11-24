@@ -1,4 +1,4 @@
-// 各类弹层聚合入口：按职责拆分在 ./dialogs/ 子目录下，对外保持原有导出签名不变。
+// 各类弹层聚合入口：按职责拆分在 ./dialogs/ 子目录下。
 
 export {
   openBookPicker,
@@ -27,6 +27,13 @@ export {
   openHistory,
   diffHtml,
 } from './dialogs/history.js';
+
+export {
+  openSyncCenter,
+  updateSyncIndicator,
+  reloadAfterSync,
+  restartWebDavAutoSync,
+} from './dialogs/sync.js';
 
 export {
   openStats,

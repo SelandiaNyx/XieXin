@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "本地小说管理器默认权限（纯本地离线，无需网络权限）",
+  "description": "写心（HeartWrite）默认窗口与事件权限（含本地存储、局域网/WebDAV同步事件与AI流式事件）",
   "windows": ["main"],
   "permissions": [
     "core:default",

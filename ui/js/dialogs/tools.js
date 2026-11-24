@@ -302,20 +302,21 @@ export async function importTextDialog() {
   const volId = state.activeVolumeId || (state.book.volumes[0] && state.book.volumes[0].id);
   const canPick = state.hasNativePickers;
   openModal({
-    title: '导入文本',
+    title: '导入文本与备份',
     width: 'narrow',
     body: `<div class="field"><label>导入方式</label>
         <select id="impMode">
-          ${canPick ? '<option value="file">从 TXT / MD 文件导入（自动识别"第X章"分章）</option>' : ''}
-          <option value="paste" ${!canPick ? 'selected' : ''}>粘贴文本导入</option>
-          ${canPick ? '<option value="backup">从写心 JSON 备份恢复</option>' : ''}
+          <option value="file">从 TXT / MD 文件导入（自动识别"第X章"分章）</option>
+          <option value="paste">粘贴文本导入</option>
+          <option value="backup">从写心 JSON 备份恢复</option>
         </select></div>
-      <div class="field" id="impFileWrap" style="margin-top:10px" ${!canPick ? 'hidden' : ''}>
+      <div class="field" id="impFileWrap" style="margin-top:10px">
         <label>文件</label>
         <div class="range-row"><input id="impPath" type="text" readonly placeholder="点击右侧按钮选择" />
-        <button class="mini" id="impBrowse">选择…</button></div>
+        <button class="mini" type="button" id="impBrowse">选择…</button></div>
+        <input type="file" id="impFileInput" accept=".txt,.md,.markdown,.json" hidden />
       </div>
-      <div class="field" id="impPasteWrap" style="margin-top:10px" ${canPick ? 'hidden' : ''}>
+      <div class="field" id="impPasteWrap" style="margin-top:10px" hidden>
         <label>粘贴内容</label><textarea id="impText" rows="10" placeholder="粘贴整本或整章文本，会自动按章节标题切分"></textarea>
       </div>
       <div class="field" style="margin-top:10px">
@@ -325,32 +326,51 @@ export async function importTextDialog() {
     footer: `<button class="mini" data-role="cancel">取消</button><button class="primary" data-role="import">开始导入</button>`,
     onMount(bodyEl, footEl) {
       const mode = bodyEl.querySelector('#impMode');
+      const fileInput = bodyEl.querySelector('#impFileInput');
+      let pickedText = '';
       const sync = () => {
         const v = mode.value;
-        bodyEl.querySelector('#impFileWrap').hidden = v !== 'file';
+        bodyEl.querySelector('#impFileWrap').hidden = v === 'paste';
         bodyEl.querySelector('#impPasteWrap').hidden = v !== 'paste';
       };
       mode.addEventListener('change', sync);
       sync();
       bodyEl.querySelector('#impBrowse').onclick = async () => {
-        try {
-          const path = await api.pickOpenFile('txt');
-          if (path) bodyEl.querySelector('#impPath').value = path;
-        } catch (e) { toast(e.message, 'err'); }
+        if (canPick) {
+          try {
+            const path = await api.pickOpenFile(mode.value === 'backup' ? 'json' : 'txt');
+            if (path) {
+              pickedText = '';
+              bodyEl.querySelector('#impPath').value = path;
+            }
+          } catch (e) { toast(e.message, 'err'); }
+        } else {
+          fileInput.accept = mode.value === 'backup' ? '.json,application/json' : '.txt,.md,.markdown,text/plain';
+          fileInput.click();
+        }
       };
+      fileInput.addEventListener('change', async () => {
+        const f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        pickedText = await f.text();
+        bodyEl.querySelector('#impPath').value = f.name;
+      });
       footEl.querySelector('[data-role="cancel"]').onclick = closeModal;
       footEl.querySelector('[data-role="import"]').onclick = async () => {
         const v = mode.value;
         try {
           let book;
           if (v === 'backup') {
-            const path = bodyEl.querySelector('#impPath').value;
-            if (!path) {
-              const picked = await api.pickOpenFile('json');
-              if (!picked) return;
-              book = await api.importBackup(picked, true);
+            if (!canPick) {
+              if (!pickedText.trim()) { toast('请先选择 JSON 备份文件', 'warn'); return; }
+              book = await api.importBackup(null, true, pickedText);
             } else {
-              book = await api.importBackup(path, true);
+              let path = bodyEl.querySelector('#impPath').value;
+              if (!path) {
+                path = await api.pickOpenFile('json');
+                if (!path) return;
+              }
+              book = await api.importBackup(path, true, null);
             }
             await reloadWorkspace();
             closeModal();
@@ -359,9 +379,14 @@ export async function importTextDialog() {
             return;
           }
           if (v === 'file') {
-            const path = bodyEl.querySelector('#impPath').value;
-            if (!path) { toast('请先选择文件', 'warn'); return; }
-            book = await api.importText(state.book.id, bodyEl.querySelector('#impVolume').value, path, null);
+            if (!canPick) {
+              if (!pickedText.trim()) { toast('请先选择文本文件', 'warn'); return; }
+              book = await api.importText(state.book.id, bodyEl.querySelector('#impVolume').value, null, pickedText);
+            } else {
+              const path = bodyEl.querySelector('#impPath').value;
+              if (!path) { toast('请先选择文件', 'warn'); return; }
+              book = await api.importText(state.book.id, bodyEl.querySelector('#impVolume').value, path, null);
+            }
           } else {
             const text = bodyEl.querySelector('#impText').value;
             if (!text.trim()) { toast('请粘贴内容', 'warn'); return; }
@@ -402,17 +427,18 @@ export function openHelp() {
     ['Ctrl + S', '保存当前章节'],
     ['Ctrl + Shift + S', '保存并创建历史快照'],
     ['Ctrl + Shift + F', '一键排版'],
-    ['Ctrl + E', '导出'],
+    ['Ctrl + Shift + A', '呼出 ✨ 写心酱 AI 助手'],
+    ['Ctrl + Shift + Y', '打开跨端同步中心'],
+    ['Ctrl + Shift + P', '切换阅读预览'],
+    ['Ctrl + E', '导出电子书 / 备份'],
     ['Ctrl + Y', '历史版本'],
     ['Ctrl + F', '全文搜索'],
     ['Ctrl + H', '查找替换'],
-    ['Ctrl + N', '新建书籍'],
+    ['Ctrl + N', '打开书架'],
     ['Ctrl + Alt + N', '新建章节'],
-    ['F9', '显示/隐藏左侧栏'],
-    ['F10', '显示/隐藏右侧栏'],
-    ['F11', '专注模式'],
+    ['F9 / F10', '切换左侧目录 / 右侧工作室'],
+    ['F11 / Esc', '专注模式 / 关闭弹层'],
     ['Ctrl + P', '番茄钟'],
-    ['Esc', '关闭弹层 / 退出专注'],
   ];
   openModal({
     title: '写心 · 使用说明',
@@ -421,27 +447,19 @@ export function openHelp() {
       <div class="shortcut-grid">
         ${shortcuts.map(([k, v]) => `<div class="row"><span>${v}</span><kbd>${k}</kbd></div>`).join('')}
       </div>
-      <div class="section-title">数据与版本</div>
+      <div class="section-title">跨端同步与 AI 创作</div>
       <div style="font-size:12.5px;line-height:1.9;color:var(--ink-soft)">
-        所有内容都保存在本机数据目录，可整目录拷贝备份：<br/>
-        <code style="word-break:break-all">${escapeHtml(state.storageDir)}</code><br/>
-        · 编辑时会按设定间隔自动保存；每章默认保留 ${state.settings.historyDepth} 个历史版本，可随时对比回滚。<br/>
-        · "一键排版"点一下直接生效（段首两格、清理行尾空格与多余空行、自动补章节标题），排错了可 <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤回。<br/>
-        · 右侧卡片分人物 / 剧情 / 灵光 / 设定，双击编辑，选中后点"插入正文"即可写入光标处。<br/>
-        · 导出支持 EPUB 电子书、TXT、Markdown、HTML 与 JSON 完整备份（含历史版本和卡片）。
+        · <b>局域网同步</b>：电脑与手机连入同一 Wi-Fi，在一端开启同步服务并扫码/粘贴配对串，即可零流量双向合并稿件，冲突章节自动保存另一端到历史版本。<br/>
+        · <b>WebDAV 云同步</b>：内置坚果云 / Nextcloud / AList 预设，支持一键双向合并与定时自动云同步。<br/>
+        · <b>✨ 写心酱 AI</b>：支持 DeepSeek / 硅基流动 / OpenAI / Claude / Gemini / 本地 Ollama 流式续写、润色、扩写、脑洞与提取设定卡，API 密钥仅留存本机。
       </div>
       <div class="section-title">关于</div>
       <div class="kv-list">
-        <div class="kv"><span class="k">名称</span><span>写心 · HeartWrite</span></div>
-        <div class="kv"><span class="k">版本</span><span>0.2.3</span></div>
-        <div class="kv"><span class="k">技术栈</span><span>Rust + Tauri 2 + WebView2（原生桌面应用）</span></div>
-        <div class="kv"><span class="k">许可证</span><span>GPL-3.0 · 修改后分发须同样开源</span></div>
-        <div class="kv"><span class="k">本次会话新增</span><span>${state.sessionChars.toLocaleString()} 字</span></div>
-      </div>
-      <div style="font-size:12.5px;line-height:1.9;color:var(--ink-soft);margin-top:10px">
-        写心是自由软件，采用 GPL-3.0：你可以随意使用、修改与再发布，
-        但分发修改后的版本时必须一并公开完整源码。<br/>
-        这不会影响你写出来的作品——小说版权完全属于你自己。
+        <div class="kv"><span class="k">名称</span><span>写心 · HeartWrite Studio</span></div>
+        <div class="kv"><span class="k">版本</span><span>1.0.0</span></div>
+        <div class="kv"><span class="k">技术栈</span><span>Rust + Tauri 2（Windows / Linux / Android 跨端原生应用）</span></div>
+        <div class="kv"><span class="k">数据目录</span><span style="word-break:break-all">${escapeHtml(state.storageDir)}</span></div>
+        <div class="kv"><span class="k">许可证</span><span>GPL-3.0 · 小说版权完全归作者本人所有</span></div>
       </div>`,
     footer: '<button class="primary" data-role="ok">知道了</button>',
     onMount(b, f) { f.querySelector('[data-role="ok"]').onclick = closeModal; },

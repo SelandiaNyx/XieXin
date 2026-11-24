@@ -169,7 +169,8 @@ if (enabled) {
         const sel = document.getElementById('setTheme');
         const list = [...sel.options].map((o) => o.value).join(',');
         assert(sel.options.length >= 7, `主题数量偏少：${sel.options.length}`);
-        assert([...sel.options].some((o) => o.value === 'md3'), '缺少 MD3 主题');
+        assert([...sel.options].some((o) => o.value === 'sakura'), '缺少樱花物语 MD3 主题');
+        assert([...sel.options].some((o) => o.value === 'starlight'), '缺少星夜物语暗色 MD3 主题');
         await closeByX();
         return list;
       }),
@@ -290,11 +291,11 @@ if (enabled) {
         await sleep(300);
         const after = getComputedStyle(document.querySelector('.preview-font-row')).fontFamily;
         assert(before !== after, `切换字体后预览没有变化：${before}`);
-        themeSel.value = 'dark';
+        themeSel.value = 'starlight';
         themeSel.dispatchEvent(new Event('change', { bubbles: true }));
         await sleep(200);
         const themeAttr = document.documentElement.getAttribute('data-theme');
-        assert(themeAttr === 'dark', `切换主题后未生效：${themeAttr}`);
+        assert(themeAttr === 'starlight', `切换主题后未生效：${themeAttr}`);
         document.querySelector('#modalFoot [data-role="close"]').click();
         await sleep(400);
         return `主题下拉 ${themeSel.options.length} 项，字体下拉 ${fontSel.options.length} 项，字体与主题切换均生效`;

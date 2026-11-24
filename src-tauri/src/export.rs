@@ -109,6 +109,18 @@ pub(crate) fn body_paragraphs(content: &str, indent: bool) -> Vec<String> {
         .collect()
 }
 
+fn meta_counts(book: &BookMeta) -> (usize, usize) {
+    let mut chars = 0usize;
+    let mut chapters = 0usize;
+    for v in &book.volumes {
+        chapters += v.chapters.len();
+        for c in &v.chapters {
+            chars += c.char_count;
+        }
+    }
+    (chars, chapters)
+}
+
 fn render_txt(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(String, usize), String> {
     let mut out = String::new();
     let mut chapters = 0usize;
@@ -120,11 +132,11 @@ fn render_txt(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(St
         if !book.genre.is_empty() {
             out.push_str(&format!("类型：{}\n", book.genre));
         }
-        let stats = store.book_stats(book)?;
+        let (char_count, total_ch) = meta_counts(book);
         out.push_str(&format!(
             "总字数：{}　章节：{}　导出时间：{}\n",
-            stats.char_count,
-            stats.chapters,
+            char_count,
+            total_ch,
             format_ms(now_ms())
         ));
         if !book.summary.trim().is_empty() {
@@ -169,8 +181,8 @@ fn render_md(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(Str
         if !book.genre.is_empty() {
             out.push_str(&format!("- 类型：{}\n", book.genre));
         }
-        let stats = store.book_stats(book)?;
-        out.push_str(&format!("- 总字数：{}\n- 章节数：{}\n\n", stats.char_count, stats.chapters));
+        let (char_count, total_ch) = meta_counts(book);
+        out.push_str(&format!("- 总字数：{}\n- 章节数：{}\n\n", char_count, total_ch));
         if !book.summary.trim().is_empty() {
             out.push_str(&format!("> {}\n\n", book.summary.trim().replace('\n', "\n> ")));
         }
@@ -228,9 +240,9 @@ fn render_html(book: &BookMeta, store: &Store, opt: &ExportOptions) -> Result<(S
         if !book.genre.is_empty() {
             meta.push(format!("类型：{}", esc_html(&book.genre)));
         }
-        let stats = store.book_stats(book)?;
-        meta.push(format!("总字数：{}", stats.char_count));
-        meta.push(format!("章节：{}", stats.chapters));
+        let (char_count, total_ch) = meta_counts(book);
+        meta.push(format!("总字数：{}", char_count));
+        meta.push(format!("章节：{}", total_ch));
         out.push_str(&format!("<p class=\"meta\">{}</p>\n", meta.join(" · ")));
         if !book.summary.trim().is_empty() {
             out.push_str(&format!(

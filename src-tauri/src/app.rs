@@ -1,29 +1,40 @@
-//! Tauri 命令层：把 `storage` / `text` / `export` 包装成前端可 `invoke` 的命令。
+//! Tauri 命令层：把 `storage` / `text` / `export` / `sync` / `ai` 包装成前端可 `invoke` 的统一命令。
 
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
+use crate::ai::{
+    self, AiChatHistory, AiChatMessage, AiContextPayload, AiRuntime, AiStreamEvent, AiTestResult,
+};
 use crate::dialog;
 use crate::export::{self, ExportOptions, ExportResult, RecentExport};
 pub use crate::fonts::FontEntry;
 use crate::storage::{
-    self, BookMeta, BookStats, Card, ChapterContent, ChapterStatus, Registry, SaveResult, SearchHit,
-    Settings, StorageLocationInfo, Store, TrashEntry, Version, VersionMeta,
+    self, AiProfile, BookMeta, BookStats, Card, ChapterContent, ChapterStatus, Registry,
+    SaveResult, SearchHit, Settings, StorageLocationInfo, Store, TrashEntry, Version, VersionMeta,
+    WebDavConfig,
 };
-use crate::text::{self, FormatRule, ReplaceReport, TextCount};
+use crate::sync::lan::{LanHostContext, LanPeerInfo, LanRuntime, LanServerStatus, PingResponse};
+use crate::sync::webdav::WebDavTestResult;
+use crate::sync::{SyncDirection, SyncReport};
+use crate::text::{self, FormatReport, FormatRule, ReplaceReport, TextCount};
 use crate::text_decode::decode_text;
 
 pub struct AppState {
-    pub store: Mutex<Store>,
+    pub store: Arc<Mutex<Store>>,
     /// 放 `storage-location.json` 的固定配置目录（不随稿件搬家）。
     pub config_dir: PathBuf,
     /// 启动时是否由 `--data-dir` / `NOVEL_MANAGER_DATA_DIR` 或移动端沙盒固定了目录。
     pub forced_dir: bool,
+    /// 局域网同步运行期管理器
+    pub lan: Arc<LanRuntime>,
+    /// AI 助手流式请求中止管理器
+    pub ai: Arc<AiRuntime>,
 }
 
 #[derive(Debug, Serialize)]
@@ -36,6 +47,10 @@ pub struct WorkspacePayload {
     pub location: StorageLocationInfo,
     /// 当前平台有没有系统原生文件/目录选择器（Android 没有）。
     pub has_native_pickers: bool,
+    /// 当前平台标识（windows / linux / macos / android）
+    pub platform: String,
+    /// 局域网服务当前状态
+    pub lan_status: LanServerStatus,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,6 +103,55 @@ fn lock<'a>(state: &'a State<'_, AppState>) -> Result<std::sync::MutexGuard<'a, 
     state.store.lock().map_err(|_| "存储锁异常".to_string())
 }
 
+/// 构造局域网同步服务端上下文（可在启动与手动开启时复用）。
+pub fn build_lan_context(
+    app: tauri::AppHandle,
+    store_arc: Arc<Mutex<Store>>,
+) -> Result<(u16, Arc<LanHostContext>), String> {
+    let (root, device_id, device_name, pin, port) = {
+        let store = store_arc.lock().map_err(|_| "存储锁异常".to_string())?;
+        let port = if store.settings.lan.port == 0 {
+            crate::sync::lan::DEFAULT_LAN_PORT
+        } else {
+            store.settings.lan.port
+        };
+        (
+            store.root.clone(),
+            store.settings.device_id.clone(),
+            store.settings.device_name.clone(),
+            store.settings.lan.pin.clone(),
+            port,
+        )
+    };
+
+    let root_for_commit = root.clone();
+    let store_for_commit = store_arc.clone();
+    let app_for_commit = app.clone();
+    let store_for_count = store_arc.clone();
+
+    let ctx = Arc::new(LanHostContext {
+        root,
+        device_id,
+        device_name,
+        pin,
+        on_commit: Arc::new(move || {
+            let fresh = crate::sync::rebuild_registry_from_disk(&root_for_commit)?;
+            if let Ok(mut guard) = store_for_commit.lock() {
+                *guard = fresh;
+            }
+            let _ = app_for_commit.emit("sync:remote-updated", serde_json::json!({ "source": "lan" }));
+            Ok(())
+        }),
+        book_count: Arc::new(move || {
+            store_for_count
+                .lock()
+                .map(|s| s.registry.books.len())
+                .unwrap_or(0)
+        }),
+    });
+    Ok((port, ctx))
+}
+
 // ---------------------------------------------------------------------------
 // 启动 / 设置 / 稿件位置
 // ---------------------------------------------------------------------------
@@ -103,6 +167,8 @@ pub fn workspace_state(state: State<'_, AppState>) -> Result<WorkspacePayload, S
         storage_bytes: store.storage_bytes(),
         location,
         has_native_pickers: dialog::FileFilter::has_native_pickers(),
+        platform: crate::sync::current_platform().to_string(),
+        lan_status: state.lan.status(),
     })
 }
 
@@ -112,22 +178,18 @@ pub fn storage_location(state: State<'_, AppState>) -> Result<StorageLocationInf
     Ok(storage::location_info(&store.root, &state.config_dir, state.forced_dir))
 }
 
-/// 更换稿件保存目录：
-/// - `path` 为空串表示"恢复默认位置"；
-/// - `move_existing` 为 `true` 时先把当前目录里的全部作品、正文、版本、封面、卡片搬过去；
-///   为 `false` 时只在指针文件里记下新位置（用于首次启动还没写稿、或原目录已丢失的情况）。
-/// - 当目标目录就是当前目录且处于首次确认位置（或 `move_existing == false`）时，直接写入位置指针，
-///   避免用户在首次启动点击「用默认位置」时因同目录校验报错。
 #[tauri::command]
 pub fn set_storage_dir(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     path: String,
-    move_existing: bool,
+    move_data: Option<bool>,
+    move_existing: Option<bool>,
 ) -> Result<StorageLocationInfo, String> {
     if state.forced_dir {
         return Err("当前使用固定数据目录，不能在界面中更换位置".into());
     }
+    let should_move = move_data.or(move_existing).unwrap_or(true);
     let trimmed = path.trim();
     let is_reset = trimmed.is_empty();
     let target = if is_reset {
@@ -136,7 +198,6 @@ pub fn set_storage_dir(
         PathBuf::from(trimmed)
     };
 
-    // 先把当前根路径拷出来，释放锁之后再搬文件；但真正换根时重新拿锁，保证没有并发写入
     let from = {
         let store = lock(&state)?;
         store.root.clone()
@@ -146,7 +207,7 @@ pub fn set_storage_dir(
     let has_recorded = storage::read_location_record(&state.config_dir).is_some();
 
     if same_dir {
-        if move_existing && has_recorded && !is_reset {
+        if should_move && has_recorded && !is_reset {
             return Err("这就是当前的位置".into());
         }
         fs::create_dir_all(&target).map_err(|e| format!("无法创建目标目录：{e}"))?;
@@ -160,7 +221,10 @@ pub fn set_storage_dir(
         return Ok(storage::location_info(&store.root, &state.config_dir, state.forced_dir));
     }
 
-    if move_existing {
+    // 换目录前先停止局域网服务，避免写入旧根路径
+    state.lan.stop();
+
+    if should_move {
         storage::move_data_dir(&from, &target)?;
     } else {
         storage::validate_new_location(&from, &target)?;
@@ -168,12 +232,7 @@ pub fn set_storage_dir(
     }
 
     let fresh = Store::load(target.clone())?;
-    let record_val = if is_reset {
-        // 恢复默认位置时也把默认目录记进指针，这样下次启动不会再当作"首次启动未选择"
-        target.to_string_lossy().to_string()
-    } else {
-        target.to_string_lossy().to_string()
-    };
+    let record_val = target.to_string_lossy().to_string();
     storage::write_location_record(&state.config_dir, &record_val)?;
 
     let mut store = lock(&state)?;
@@ -187,9 +246,20 @@ pub fn chapter_statuses() -> Vec<ChapterStatus> {
 }
 
 #[tauri::command]
-pub fn save_settings(state: State<'_, AppState>, next: Settings) -> Result<Settings, String> {
+pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<Settings, String> {
     let mut store = lock(&state)?;
-    store.settings = next;
+    let prev_device_id = store.settings.device_id.clone();
+    store.settings = settings;
+    if store.settings.device_id.trim().is_empty() {
+        store.settings.device_id = if prev_device_id.is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            prev_device_id
+        };
+    }
+    if store.settings.lan.pin.trim().is_empty() {
+        store.settings.lan.pin = crate::sync::lan::generate_pin();
+    }
     store.settings.history_depth = store.settings.history_depth.clamp(1, storage::MAX_HISTORY_HARD_CAP);
     store.settings.autosave_secs = store.settings.autosave_secs.max(5);
     store.settings.font_size = store.settings.font_size.clamp(12, 36);
@@ -199,7 +269,6 @@ pub fn save_settings(state: State<'_, AppState>, next: Settings) -> Result<Setti
     Ok(store.settings.clone())
 }
 
-/// 记住当前打开的书与章节（轻量写入，供切章时调用，下次启动直接定位）。
 #[tauri::command]
 pub fn set_last_position(
     state: State<'_, AppState>,
@@ -294,10 +363,9 @@ pub fn delete_book(state: State<'_, AppState>, book_id: String) -> Result<Regist
 }
 
 // ---------------------------------------------------------------------------
-// 封面（可选：没设过就走默认颜色 + 图标）
+// 封面（支持桌面文件路径 + 移动端 base64 上传）
 // ---------------------------------------------------------------------------
 
-/// 读取某本书的封面 data URL；没有封面或文件缺失时返回空串。
 #[tauri::command]
 pub fn book_cover(state: State<'_, AppState>, book_id: String) -> Result<String, String> {
     let store = lock(&state)?;
@@ -307,7 +375,6 @@ pub fn book_cover(state: State<'_, AppState>, book_id: String) -> Result<String,
         .unwrap_or_default())
 }
 
-/// 预览一张尚未保存的图片（用户在资料弹层里刚选完、还没点"保存"时用）。
 #[tauri::command]
 pub fn preview_cover(path: String) -> Result<String, String> {
     let (ext, bytes) = crate::cover::read_image(&path)?;
@@ -322,6 +389,18 @@ pub fn set_book_cover(
 ) -> Result<BookMeta, String> {
     let mut store = lock(&state)?;
     store.set_book_cover(&book_id, &source_path)
+}
+
+#[tauri::command]
+pub fn set_book_cover_bytes(
+    state: State<'_, AppState>,
+    book_id: String,
+    ext: String,
+    base64_data: String,
+) -> Result<BookMeta, String> {
+    let bytes = crate::cover::base64_decode(&base64_data).ok_or("图片数据解码失败")?;
+    let mut store = lock(&state)?;
+    store.set_book_cover_bytes(&book_id, &ext, &bytes)
 }
 
 #[tauri::command]
@@ -348,11 +427,7 @@ pub fn verify_book(state: State<'_, AppState>, book_id: String) -> Result<Vec<St
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn add_volume(
-    state: State<'_, AppState>,
-    book_id: String,
-    title: String,
-) -> Result<BookMeta, String> {
+pub fn add_volume(state: State<'_, AppState>, book_id: String, title: String) -> Result<BookMeta, String> {
     let mut store = lock(&state)?;
     let _ = store.add_volume(&book_id, &title)?;
     store.book(&book_id)
@@ -564,7 +639,7 @@ pub fn delete_version(
     chapter_id: String,
     version_id: String,
 ) -> Result<usize, String> {
-    let store = lock(&state)?;
+    let mut store = lock(&state)?;
     store.delete_version(&book_id, &chapter_id, &version_id)
 }
 
@@ -603,40 +678,42 @@ pub fn delete_card(
 // 排版 / 搜索 / 字数
 // ---------------------------------------------------------------------------
 
-/// 全书搜索：在 Rust 侧一次扫完所有章节的正文，返回命中列表与上下文片段。
 #[tauri::command]
 pub fn search_book(
     state: State<'_, AppState>,
     book_id: String,
-    keyword: String,
+    needle: Option<String>,
+    keyword: Option<String>,
+    max_per_chapter: Option<usize>,
 ) -> Result<Vec<SearchHit>, String> {
+    let kw = needle.or(keyword).unwrap_or_default();
     let store = lock(&state)?;
-    store.search_book(&book_id, &keyword, 50)
+    store.search_book(&book_id, &kw, max_per_chapter.unwrap_or(50))
 }
 
 #[tauri::command]
-pub fn count_text_cmd(text: String) -> TextCount {
+pub fn count(text: String) -> TextCount {
     text::count_text(&text)
 }
 
 #[tauri::command]
-pub fn smart_format_cmd(
+pub fn one_click_format(
     text: String,
     rule: String,
     chapter_title: Option<String>,
     ensure_title: bool,
-) -> String {
-    text::smart_format(&text, FormatRule::parse(&rule), chapter_title.as_deref(), ensure_title)
+) -> FormatReport {
+    text::smart_format_report(&text, FormatRule::parse(&rule), chapter_title.as_deref(), ensure_title)
 }
 
 #[tauri::command]
-pub fn replace_all_cmd(
-    content: String,
+pub fn replace_all(
+    text: String,
     needle: String,
     replacement: String,
     case_sensitive: bool,
 ) -> (String, ReplaceReport) {
-    text::replace_all(&content, &needle, &replacement, case_sensitive)
+    text::replace_all(&text, &needle, &replacement, case_sensitive)
 }
 
 // ---------------------------------------------------------------------------
@@ -644,22 +721,22 @@ pub fn replace_all_cmd(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn import_text_cmd(
+pub fn import_text(
     state: State<'_, AppState>,
     book_id: String,
     volume_id: String,
-    file_path: Option<String>,
-    raw_text: Option<String>,
+    source_path: Option<String>,
+    text: Option<String>,
     prefix: Option<String>,
 ) -> Result<BookMeta, String> {
-    let text = if let Some(p) = file_path {
+    let body = if let Some(p) = source_path.filter(|s| !s.trim().is_empty()) {
         let bytes = fs::read(&p).map_err(|e| format!("读取文件失败: {e}"))?;
         decode_text(&bytes)
     } else {
-        raw_text.unwrap_or_default()
+        text.unwrap_or_default()
     };
     let mut store = lock(&state)?;
-    let _ = store.import_text(&book_id, &volume_id, &text, &prefix.unwrap_or_default())?;
+    let _ = store.import_text(&book_id, &volume_id, &body, &prefix.unwrap_or_default())?;
     store.book(&book_id)
 }
 
@@ -674,15 +751,8 @@ struct BackupChapterIn {
     versions: Vec<Version>,
 }
 
-/// 从 JSON 备份文件导入一整本书。
-#[tauri::command]
-pub fn import_backup_cmd(
-    state: State<'_, AppState>,
-    file_path: String,
-    as_new_book: bool,
-) -> Result<BookMeta, String> {
-    let raw = fs::read_to_string(&file_path).map_err(|e| format!("读取备份失败: {e}"))?;
-    let val: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("备份格式错误: {e}"))?;
+fn import_backup_raw(store: &mut Store, raw: &str, as_new_book: bool) -> Result<BookMeta, String> {
+    let val: serde_json::Value = serde_json::from_str(raw).map_err(|e| format!("备份格式错误: {e}"))?;
     let book_val = val.get("book").ok_or("备份中缺少 book 字段")?;
     let mut book: BookMeta = serde_json::from_value(book_val.clone()).map_err(|e| e.to_string())?;
     let cards: Vec<Card> = val
@@ -695,14 +765,12 @@ pub fn import_backup_cmd(
         .unwrap_or_default();
     let backup_cover = export::cover_from_backup(&val);
 
-    let mut store = lock(&state)?;
     if as_new_book || store.registry.books.iter().any(|b| b.id == book.id) {
         book.id = uuid::Uuid::new_v4().to_string();
         book.title = format!("{}（导入）", book.title);
     }
     fs::create_dir_all(store.book_dir(&book.id)).map_err(|e| e.to_string())?;
     fs::create_dir_all(store.content_dir(&book.id)).map_err(|e| e.to_string())?;
-    // 备份里带了封面字节就一并落盘；没带（或坏了）就把 cover_image 清空，免得指向不存在的文件
     match backup_cover {
         Some((ext, bytes)) if store.write_book_cover_file(&book.id, &ext, &bytes).is_ok() => {
             book.cover_image = format!("cover.{ext}");
@@ -711,6 +779,14 @@ pub fn import_backup_cmd(
     }
     store.save_cards(&book.id, &cards)?;
     for c in chapters {
+        let ver_count = c.versions.len();
+        let char_count = text::count_text(&c.content).total;
+        for vol in book.volumes.iter_mut() {
+            if let Some(meta) = vol.chapters.iter_mut().find(|ch| ch.id == c.id) {
+                meta.versions = ver_count;
+                meta.char_count = char_count;
+            }
+        }
         store.write_content(
             &book.id,
             &ChapterContent {
@@ -728,7 +804,25 @@ pub fn import_backup_cmd(
 }
 
 #[tauri::command]
-pub fn suggest_export_filename(
+pub fn import_backup(
+    state: State<'_, AppState>,
+    source_path: Option<String>,
+    raw_json: Option<String>,
+    as_new_book: bool,
+) -> Result<BookMeta, String> {
+    let raw = if let Some(json) = raw_json.filter(|s| !s.trim().is_empty()) {
+        json
+    } else if let Some(path) = source_path.filter(|s| !s.trim().is_empty()) {
+        fs::read_to_string(&path).map_err(|e| format!("读取备份失败: {e}"))?
+    } else {
+        return Err("请提供备份文件或 JSON 内容".into());
+    };
+    let mut store = lock(&state)?;
+    import_backup_raw(&mut store, &raw, as_new_book)
+}
+
+#[tauri::command]
+pub fn suggest_filename(
     state: State<'_, AppState>,
     book_id: String,
     options: ExportOptions,
@@ -738,17 +832,17 @@ pub fn suggest_export_filename(
 }
 
 #[tauri::command]
-pub fn pick_save_path_cmd(default_name: String, ext: String) -> Option<String> {
+pub fn pick_save_path(default_name: String, ext: String) -> Option<String> {
     export::pick_save_path(&default_name, &ext)
 }
 
 #[tauri::command]
-pub fn pick_directory_cmd(title: Option<String>) -> Option<String> {
+pub fn pick_directory(title: Option<String>) -> Option<String> {
     export::pick_directory(&title.unwrap_or_else(|| "选择导出目录".into()))
 }
 
 #[tauri::command]
-pub fn pick_open_file_cmd(kind: Option<String>) -> Option<String> {
+pub fn pick_open_file(kind: Option<String>) -> Option<String> {
     match kind.as_deref() {
         Some("json") => export::pick_open_file(&[("JSON 备份", &["json"])]),
         Some("image") => export::pick_open_file(&[(
@@ -802,7 +896,260 @@ pub fn list_recent_exports(state: State<'_, AppState>) -> Result<Vec<RecentExpor
 }
 
 // ---------------------------------------------------------------------------
-// 回收站
+// 局域网同步（LAN Sync）
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn lan_status(state: State<'_, AppState>) -> LanServerStatus {
+    state.lan.status()
+}
+
+#[tauri::command]
+pub async fn lan_start(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    port: Option<u16>,
+    pin: Option<String>,
+    device_name: Option<String>,
+) -> Result<LanServerStatus, String> {
+    {
+        let mut store = lock(&state)?;
+        if let Some(p) = port.filter(|&v| v > 0) {
+            store.settings.lan.port = p;
+        }
+        if let Some(code) = pin.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+            store.settings.lan.pin = code;
+        }
+        if let Some(name) = device_name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+            store.settings.device_name = name;
+        }
+        store.settings.lan.server_enabled = true;
+        store.save_settings()?;
+    }
+    let (bind_port, ctx) = build_lan_context(app, state.store.clone())?;
+    state.lan.start(bind_port, ctx).await
+}
+
+#[tauri::command]
+pub fn lan_stop(state: State<'_, AppState>) -> Result<LanServerStatus, String> {
+    state.lan.stop();
+    if let Ok(mut store) = lock(&state) {
+        store.settings.lan.server_enabled = false;
+        let _ = store.save_settings();
+    }
+    Ok(state.lan.status())
+}
+
+#[tauri::command]
+pub async fn lan_regenerate_pin(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<LanServerStatus, String> {
+    let was_running = state.lan.status().running;
+    let new_pin = crate::sync::lan::generate_pin();
+    {
+        let mut store = lock(&state)?;
+        store.settings.lan.pin = new_pin.clone();
+        store.save_settings()?;
+    }
+    if was_running {
+        let (bind_port, ctx) = build_lan_context(app, state.store.clone())?;
+        return state.lan.start(bind_port, ctx).await;
+    }
+    let mut st = state.lan.status();
+    st.pin = new_pin;
+    Ok(st)
+}
+
+#[tauri::command]
+pub async fn lan_scan_peers(state: State<'_, AppState>) -> Result<Vec<LanPeerInfo>, String> {
+    let self_id = lock(&state)?.settings.device_id.clone();
+    Ok(state.lan.scan_peers(&self_id).await)
+}
+
+#[tauri::command]
+pub async fn lan_ping_peer(url: String) -> Result<PingResponse, String> {
+    crate::sync::lan::ping_lan_peer(&url).await
+}
+
+#[tauri::command]
+pub async fn lan_sync_peer(
+    state: State<'_, AppState>,
+    url: String,
+    pin: String,
+    direction: Option<String>,
+) -> Result<SyncReport, String> {
+    let (root, device_id, device_name) = {
+        let store = lock(&state)?;
+        (
+            store.root.clone(),
+            store.settings.device_id.clone(),
+            store.settings.device_name.clone(),
+        )
+    };
+    let dir = SyncDirection::parse(direction.as_deref().unwrap_or("bidirectional"));
+    let (report, mut fresh_store) =
+        crate::sync::lan::sync_with_lan_peer(&root, &device_id, &device_name, &url, &pin, dir).await?;
+    fresh_store.settings.lan.last_peer_url = url;
+    fresh_store.settings.lan.last_peer_pin = pin;
+    fresh_store.settings.lan.last_sync_at = report.finished_at;
+    let _ = fresh_store.save_settings();
+    let mut guard = lock(&state)?;
+    *guard = fresh_store;
+    Ok(report)
+}
+
+// ---------------------------------------------------------------------------
+// WebDAV 云同步
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn webdav_test(config: WebDavConfig) -> Result<WebDavTestResult, String> {
+    crate::sync::webdav::test_webdav_connection(&config).await
+}
+
+#[tauri::command]
+pub async fn webdav_sync(
+    state: State<'_, AppState>,
+    config: Option<WebDavConfig>,
+    direction: Option<String>,
+) -> Result<SyncReport, String> {
+    let (root, device_id, device_name, cfg) = {
+        let mut store = lock(&state)?;
+        if let Some(c) = config {
+            store.settings.webdav = c;
+            store.save_settings()?;
+        }
+        (
+            store.root.clone(),
+            store.settings.device_id.clone(),
+            store.settings.device_name.clone(),
+            store.settings.webdav.clone(),
+        )
+    };
+    let dir = SyncDirection::parse(direction.as_deref().unwrap_or("bidirectional"));
+    let (report, mut fresh_store) =
+        crate::sync::webdav::sync_with_webdav(&root, &device_id, &device_name, &cfg, dir).await?;
+    fresh_store.settings.webdav.last_sync_at = report.finished_at;
+    let _ = fresh_store.save_settings();
+    let mut guard = lock(&state)?;
+    *guard = fresh_store;
+    Ok(report)
+}
+
+// ---------------------------------------------------------------------------
+// AI 创作助手
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn ai_chat_stream(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    request_id: String,
+    messages: Vec<AiChatMessage>,
+    context: AiContextPayload,
+    profile: Option<AiProfile>,
+) -> Result<String, String> {
+    let resolved_profile = match profile {
+        Some(p) => p,
+        None => lock(&state)?.settings.ai.active_profile(),
+    };
+    let cancel_rx = state.ai.register(&request_id);
+    let rid = request_id.clone();
+    let app_for_emit = app.clone();
+
+    let result = ai::stream_chat(&resolved_profile, &messages, &context, cancel_rx, |delta, reasoning| {
+        let _ = app_for_emit.emit(
+            "ai:stream",
+            AiStreamEvent {
+                request_id: rid.clone(),
+                kind: "delta".into(),
+                text: delta.to_string(),
+                reasoning: reasoning.to_string(),
+            },
+        );
+    })
+    .await;
+
+    state.ai.finish(&request_id);
+
+    match result {
+        Ok(full) => {
+            let _ = app.emit(
+                "ai:stream",
+                AiStreamEvent {
+                    request_id,
+                    kind: "done".into(),
+                    text: full.clone(),
+                    reasoning: String::new(),
+                },
+            );
+            Ok(full)
+        }
+        Err(e) if e == "__ABORTED__" => {
+            let _ = app.emit(
+                "ai:stream",
+                AiStreamEvent {
+                    request_id,
+                    kind: "aborted".into(),
+                    text: String::new(),
+                    reasoning: String::new(),
+                },
+            );
+            Ok(String::new())
+        }
+        Err(e) => {
+            let _ = app.emit(
+                "ai:stream",
+                AiStreamEvent {
+                    request_id,
+                    kind: "error".into(),
+                    text: e.clone(),
+                    reasoning: String::new(),
+                },
+            );
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn ai_cancel(state: State<'_, AppState>, request_id: String) -> bool {
+    state.ai.cancel(&request_id)
+}
+
+#[tauri::command]
+pub async fn ai_list_models(
+    provider: String,
+    base_url: String,
+    api_key: String,
+) -> Result<Vec<String>, String> {
+    ai::fetch_models(&provider, &base_url, &api_key).await
+}
+
+#[tauri::command]
+pub async fn ai_test_connection(profile: AiProfile) -> Result<AiTestResult, String> {
+    ai::test_connection(&profile).await
+}
+
+#[tauri::command]
+pub fn ai_load_history(state: State<'_, AppState>, book_id: String) -> Result<AiChatHistory, String> {
+    let store = lock(&state)?;
+    ai::load_chat_history(&store.root, &book_id)
+}
+
+#[tauri::command]
+pub fn ai_save_history(
+    state: State<'_, AppState>,
+    book_id: String,
+    messages: Vec<AiChatMessage>,
+) -> Result<(), String> {
+    let store = lock(&state)?;
+    ai::save_chat_history(&store.root, &book_id, messages)
+}
+
+// ---------------------------------------------------------------------------
+// 回收站 / 字体 / 系统辅助
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
@@ -817,18 +1164,10 @@ pub fn empty_trash(state: State<'_, AppState>) -> Result<usize, String> {
     store.empty_trash()
 }
 
-// ---------------------------------------------------------------------------
-// 系统字体枚举
-// ---------------------------------------------------------------------------
-
 #[tauri::command]
 pub fn list_fonts() -> Vec<FontEntry> {
     crate::fonts::scan_system_fonts()
 }
-
-// ---------------------------------------------------------------------------
-// 打开资源管理器 / 诊断日志 / 自检
-// ---------------------------------------------------------------------------
 
 #[tauri::command]
 pub fn open_in_explorer(path: String) -> Result<(), String> {
@@ -898,9 +1237,8 @@ pub fn run_self_check(state: State<'_, AppState>) -> Result<SelfCheckReport, Str
     })
 }
 
-/// 在应用内直接跑完整端到端冒烟测试（使用独立临时目录，不动用户数据）。
 #[tauri::command]
-pub fn run_smoke_in_app() -> Result<String, String> {
+pub fn dev_smoke_test() -> Result<String, String> {
     let tmp = std::env::temp_dir().join(format!("heartwrite-smoke-{}", text::now_ms()));
     let res = crate::smoke::run_smoke_at(&tmp);
     let _ = fs::remove_dir_all(&tmp);
@@ -929,7 +1267,6 @@ pub fn ui_log_path(root: &Path) -> PathBuf {
     root.join("ui.log")
 }
 
-/// 启动参数或环境变量里是否显式锁死了数据目录。
 pub fn forced_data_dir() -> Option<PathBuf> {
     if let Ok(custom) = std::env::var("NOVEL_MANAGER_DATA_DIR") {
         if !custom.trim().is_empty() {
@@ -939,12 +1276,10 @@ pub fn forced_data_dir() -> Option<PathBuf> {
     None
 }
 
-/// 当前运行环境是否锁定稿件目录（包含 `--data-dir` 显式指定，以及无原生选择器的移动端沙盒）。
 pub fn is_location_locked() -> bool {
     forced_data_dir().is_some() || !dialog::FileFilter::has_native_pickers()
 }
 
-/// 放 `storage-location.json` 的固定配置目录（不跟着稿件搬家）。
 pub fn config_dir_for_app(app: &tauri::AppHandle) -> PathBuf {
     if let Some(dir) = forced_data_dir() {
         return dir;
@@ -956,19 +1291,11 @@ pub fn config_dir_for_app(app: &tauri::AppHandle) -> PathBuf {
         .unwrap_or_else(storage::default_config_dir)
 }
 
-/// 当前宿主环境下的默认稿件目录：
-/// - 优先读取 Tauri `app.path().app_data_dir()`（Android 上为应用私有可写目录，避免落到 `/` 只读根目录）；
-/// - 移动端自动放入 `manuscripts` 子目录，与 WebView 缓存隔离；
-/// - 拿不到宿主目录时退回 `storage::default_data_dir()`。
 pub fn default_data_dir_for_app(app: &tauri::AppHandle) -> PathBuf {
     let isolate_subdir = !dialog::FileFilter::has_native_pickers();
     storage::resolve_app_data_dir(app.path().app_data_dir().ok(), isolate_subdir)
 }
 
-/// 决定这次启动该把稿件放在哪儿：
-/// 1. `--data-dir` / `NOVEL_MANAGER_DATA_DIR` 显式指定 → 直接用；
-/// 2. 桌面端指针文件里记着用户上次选的目录，且该目录可写 → 用它；
-/// 3. 其余情况（首次启动、移动端沙盒、或记住的盘符/目录不可用）→ 用宿主默认数据目录。
 pub fn storage_dir_for_app(app: &tauri::AppHandle) -> PathBuf {
     if let Some(dir) = forced_data_dir() {
         return dir;
@@ -985,21 +1312,18 @@ pub fn storage_dir_for_app(app: &tauri::AppHandle) -> PathBuf {
     default_data_dir_for_app(app)
 }
 
-/// 是否处于开发截图验收模式（`NOVEL_MANAGER_SELFTEST=1`）。
 pub fn is_selftest() -> bool {
     std::env::var("NOVEL_MANAGER_SELFTEST")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
 }
 
-/// 是否处于界面自动化验收模式（`NOVEL_MANAGER_UITEST=1`）。
 pub fn is_uitest() -> bool {
     std::env::var("NOVEL_MANAGER_UITEST")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
 }
 
-/// 返回主窗口的外部/内部物理尺寸与缩放比，用于诊断 DPI 与布局。
 #[tauri::command]
 pub fn window_diag(window: tauri::Window) -> Result<String, String> {
     let scale = window.scale_factor().map_err(|e| e.to_string())?;

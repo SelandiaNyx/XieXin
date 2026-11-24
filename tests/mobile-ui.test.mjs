@@ -148,6 +148,24 @@ test('移动端界面回归', { skip: support.ok ? false : support.reason, timeo
           assert.equal(modal.footBottom, modal.vh, '底部按钮应贴在屏幕下沿');
           assert.ok(modal.scrollable, '设置项应能在弹层内滚动');
           assert.equal(modal.closed, true, '关闭按钮应能关掉弹层');
+
+          // MD3 底部导航栏：切换 AI 抽屉与同步中心
+          const bnav = await page.evaluate(`(async () => {
+            const navVisible = getComputedStyle(document.getElementById('mobileNav')).display !== 'none';
+            document.querySelector('#mobileNav [data-mnav="ai"]').click();
+            await new Promise((r) => setTimeout(r, 350));
+            const aiState = {
+              inspector: document.getElementById('app').dataset.inspector,
+              aiVisible: !document.getElementById('aiPane').hidden,
+            };
+            document.querySelector('#mobileNav [data-mnav="write"]').click();
+            await new Promise((r) => setTimeout(r, 300));
+            return { navVisible, ...aiState, backToWrite: document.getElementById('app').dataset.inspector === 'closed' };
+          })()`);
+          assert.equal(bnav.navVisible, true, '窄屏应显示 MD3 底部导航栏');
+          assert.equal(bnav.inspector, 'open', '点底部 AI 应滑出右侧工作室抽屉');
+          assert.equal(bnav.aiVisible, true, '点底部 AI 应直接切到写心酱 AI 面板');
+          assert.equal(bnav.backToWrite, true, '点底部写作应收起抽屉回到正文');
         } finally {
           await page.close();
         }

@@ -1,4 +1,4 @@
-//! 数据模型：设置、书籍、卷、章节、版本历史、卡片与统计结构。
+//! 数据模型：设置（含外观、排版、AI 助手、WebDAV、局域网同步）、书籍、卷、章节、版本历史、卡片与统计结构。
 
 use std::collections::BTreeMap;
 
@@ -10,7 +10,7 @@ use crate::text::now_ms;
 pub const MAX_HISTORY_HARD_CAP: usize = 200;
 
 fn default_theme() -> String {
-    "light".into()
+    "sakura".into()
 }
 fn default_font_family() -> String {
     "\"霞鹜文楷\", \"LXGW WenKai\", \"Source Han Serif SC\", \"思源宋体\", \"Songti SC\", \"SimSun\", serif".into()
@@ -19,7 +19,7 @@ fn default_font_size() -> u32 {
     18
 }
 fn default_line_height() -> f32 {
-    1.9
+    1.95
 }
 fn default_autosave_secs() -> u32 {
     20
@@ -42,6 +42,213 @@ fn default_format_rule() -> String {
 fn default_letter_spacing() -> f32 {
     0.02
 }
+fn default_true() -> bool {
+    true
+}
+fn default_ai_temperature() -> f32 {
+    0.75
+}
+fn default_ai_max_tokens() -> u32 {
+    2048
+}
+fn default_ai_context_chars() -> usize {
+    2500
+}
+fn default_webdav_path() -> String {
+    "/HeartWrite".into()
+}
+fn default_auto_sync_mins() -> u32 {
+    10
+}
+fn default_lan_port() -> u16 {
+    19820
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AiProfile {
+    pub id: String,
+    pub name: String,
+    /// "openai" | "anthropic" | "gemini"
+    pub provider: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub temperature: f32,
+    pub max_tokens: u32,
+}
+
+impl Default for AiProfile {
+    fn default() -> Self {
+        Self {
+            id: "deepseek".into(),
+            name: "DeepSeek".into(),
+            provider: "openai".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            api_key: String::new(),
+            model: "deepseek-chat".into(),
+            temperature: default_ai_temperature(),
+            max_tokens: default_ai_max_tokens(),
+        }
+    }
+}
+
+pub fn default_ai_profiles() -> Vec<AiProfile> {
+    vec![
+        AiProfile {
+            id: "deepseek".into(),
+            name: "DeepSeek".into(),
+            provider: "openai".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            api_key: String::new(),
+            model: "deepseek-chat".into(),
+            temperature: 0.75,
+            max_tokens: 2048,
+        },
+        AiProfile {
+            id: "siliconflow".into(),
+            name: "硅基流动 SiliconFlow".into(),
+            provider: "openai".into(),
+            base_url: "https://api.siliconflow.cn/v1".into(),
+            api_key: String::new(),
+            model: "Qwen/Qwen2.5-72B-Instruct".into(),
+            temperature: 0.75,
+            max_tokens: 2048,
+        },
+        AiProfile {
+            id: "openai".into(),
+            name: "OpenAI / 兼容中转".into(),
+            provider: "openai".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            api_key: String::new(),
+            model: "gpt-4o-mini".into(),
+            temperature: 0.75,
+            max_tokens: 2048,
+        },
+        AiProfile {
+            id: "claude".into(),
+            name: "Anthropic Claude".into(),
+            provider: "anthropic".into(),
+            base_url: "https://api.anthropic.com/v1".into(),
+            api_key: String::new(),
+            model: "claude-sonnet-4-20250514".into(),
+            temperature: 0.75,
+            max_tokens: 2048,
+        },
+        AiProfile {
+            id: "gemini".into(),
+            name: "Google Gemini".into(),
+            provider: "gemini".into(),
+            base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
+            api_key: String::new(),
+            model: "gemini-2.5-flash".into(),
+            temperature: 0.75,
+            max_tokens: 2048,
+        },
+        AiProfile {
+            id: "ollama".into(),
+            name: "本地 Ollama".into(),
+            provider: "openai".into(),
+            base_url: "http://127.0.0.1:11434/v1".into(),
+            api_key: String::new(),
+            model: "qwen2.5:7b".into(),
+            temperature: 0.75,
+            max_tokens: 2048,
+        },
+    ]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AiConfig {
+    pub active_profile_id: String,
+    pub profiles: Vec<AiProfile>,
+    pub system_prompt: String,
+    pub include_chapter: bool,
+    pub include_cards: bool,
+    pub include_outline: bool,
+    pub context_chars: usize,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            active_profile_id: "deepseek".into(),
+            profiles: default_ai_profiles(),
+            system_prompt: String::new(),
+            include_chapter: true,
+            include_cards: true,
+            include_outline: true,
+            context_chars: default_ai_context_chars(),
+        }
+    }
+}
+
+impl AiConfig {
+    pub fn active_profile(&self) -> AiProfile {
+        self.profiles
+            .iter()
+            .find(|p| p.id == self.active_profile_id)
+            .or_else(|| self.profiles.first())
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WebDavConfig {
+    pub enabled: bool,
+    /// "jianguoyun" | "nextcloud" | "alist" | "custom"
+    pub preset: String,
+    pub url: String,
+    pub username: String,
+    pub password: String,
+    pub remote_path: String,
+    pub auto_sync: bool,
+    pub auto_sync_mins: u32,
+    pub last_sync_at: i64,
+}
+
+impl Default for WebDavConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            preset: "jianguoyun".into(),
+            url: "https://dav.jianguoyun.com/dav/".into(),
+            username: String::new(),
+            password: String::new(),
+            remote_path: default_webdav_path(),
+            auto_sync: false,
+            auto_sync_mins: default_auto_sync_mins(),
+            last_sync_at: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LanSyncConfig {
+    pub server_enabled: bool,
+    pub port: u16,
+    pub pin: String,
+    pub last_peer_url: String,
+    pub last_peer_pin: String,
+    pub last_sync_at: i64,
+}
+
+impl Default for LanSyncConfig {
+    fn default() -> Self {
+        Self {
+            server_enabled: false,
+            port: default_lan_port(),
+            pin: String::new(),
+            last_peer_url: String::new(),
+            last_peer_pin: String::new(),
+            last_sync_at: 0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -61,6 +268,24 @@ pub struct Settings {
     pub last_chapter_id: String,
     pub last_export_dir: String,
     pub one_click_format_rule: String,
+    /// 二次元主题氛围装饰开关（樱花/星光微水印与立绘徽章）
+    #[serde(default = "default_true")]
+    pub anime_decor: bool,
+    /// 打字机居中滚动模式
+    pub typewriter_mode: bool,
+    /// 快捷标点栏
+    #[serde(default = "default_true")]
+    pub quick_punct_bar: bool,
+    /// 章纲便签栏
+    #[serde(default = "default_true")]
+    pub show_synopsis: bool,
+    /// 本设备唯一 ID（用于局域网与 WebDAV 同步识别）
+    pub device_id: String,
+    /// 本设备名称（如“我的电脑”/“Android 手机”）
+    pub device_name: String,
+    pub ai: AiConfig,
+    pub webdav: WebDavConfig,
+    pub lan: LanSyncConfig,
 }
 
 impl Default for Settings {
@@ -80,6 +305,15 @@ impl Default for Settings {
             last_chapter_id: String::new(),
             last_export_dir: String::new(),
             one_click_format_rule: default_format_rule(),
+            anime_decor: true,
+            typewriter_mode: false,
+            quick_punct_bar: true,
+            show_synopsis: true,
+            device_id: String::new(),
+            device_name: String::new(),
+            ai: AiConfig::default(),
+            webdav: WebDavConfig::default(),
+            lan: LanSyncConfig::default(),
         }
     }
 }
@@ -197,7 +431,7 @@ impl Default for BookMeta {
             author: String::new(),
             genre: String::new(),
             summary: String::new(),
-            cover_color: "#5b6be1".into(),
+            cover_color: "#c84b7a".into(),
             cover_image: String::new(),
             created_at: now,
             updated_at: now,
@@ -211,7 +445,7 @@ impl Default for BookMeta {
 pub struct Version {
     pub id: String,
     pub created_at: i64,
-    pub kind: String, // auto | manual | restore | import
+    pub kind: String, // auto | manual | restore | import | conflict
     pub label: String,
     pub chars: usize,
     pub content: String,
@@ -284,7 +518,7 @@ impl Default for Card {
             title: String::new(),
             content: String::new(),
             tags: Vec::new(),
-            color: "#8ab4f8".into(),
+            color: "#e87aa4".into(),
             pinned: false,
             fields: BTreeMap::new(),
             created_at: now,

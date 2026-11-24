@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"本地小说管理器默认权限（纯本地离线，无需网络权限）","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-close","core:window:allow-destroy"]}}
+{"default":{"identifier":"default","description":"写心（HeartWrite）默认窗口与事件权限（含本地存储、局域网/WebDAV同步事件与AI流式事件）","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-close","core:window:allow-destroy"]}}
