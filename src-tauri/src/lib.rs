@@ -157,6 +157,8 @@ fn run_entry(cli: CliArgs) {
                 let _ = app::append_ui_log(&store.root, "SELFTEST_SEEDED_IN_RUST");
             }
 
+            let store_root = store.root.clone();
+            let custom_webview_dir = app::forced_data_dir().map(|d| d.join(".webview"));
             let auto_start_lan = store.settings.lan.server_enabled;
             let store_arc = Arc::new(Mutex::new(store));
             let lan = Arc::new(sync::lan::LanRuntime::default());
@@ -180,27 +182,53 @@ fn run_entry(cli: CliArgs) {
                 ai,
             });
 
-            // 仅在开发验收模式下注入诊断脚本
-            if selftest || uitest || start_url.is_some() {
-                if let Some(win) = app.get_webview_window("main") {
-                    let mut script = format!(
-                        "window.__MOGE_DEV__ = true; window.__MOGE_SELFTEST__ = {}; window.__MOGE_UITEST__ = {};\n",
-                        if selftest { "true" } else { "false" },
-                        if uitest { "true" } else { "false" }
-                    );
-                    if let Some(u) = &start_url {
-                        if let Ok(q) = serde_json::to_string(u) {
-                            script.push_str(&format!(
-                                "if (!location.search && {q}.includes('?')) {{ history.replaceState(null, '', {q}); }}\n"
-                            ));
-                        }
-                    }
-                    script.push_str(
-                        "window.addEventListener('DOMContentLoaded', () => { import('./js/dev/inject.js'); });\n",
-                    );
-                    let _ = win.eval(&script);
-                }
+            // 显式创建主窗口（tauri.conf.json 中 `windows: []`，以便按桌面/移动端差异化配置窗口尺寸）
+            let url = start_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("index.html");
+            let mut win = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App(url.into()),
+            )
+            .title("写心 · 现代跨端小说写作工作台")
+            .zoom_hotkeys_enabled(false);
+
+            // 桌面端指定默认/最小窗口尺寸并居中；移动端保持铺满屏幕，避免 1040×640 卡死手机布局
+            #[cfg(desktop)]
+            {
+                win = win
+                    .inner_size(1440.0, 900.0)
+                    .min_inner_size(1040.0, 640.0)
+                    .center();
             }
+
+            if let Some(dir) = custom_webview_dir {
+                win = win.data_directory(dir);
+            }
+
+            // 仅在开发验收模式下注入诊断脚本
+            if selftest || uitest {
+                let mut boot = String::from("window.__MOGE_DEV__ = true;");
+                if selftest {
+                    boot.push_str("window.__MOGE_SELFTEST__ = true;");
+                }
+                if uitest {
+                    boot.push_str("window.__MOGE_UITEST__ = true;");
+                    if std::env::var("NOVEL_MANAGER_CLOSETEST").is_ok() {
+                        boot.push_str("window.__MOGE_CLOSETEST__ = true;");
+                    }
+                }
+                boot.push_str(
+                    "window.addEventListener('DOMContentLoaded', () => { import('/js/dev/inject.js'); });",
+                );
+                win = win.initialization_script(boot);
+            }
+
+            win.build()?;
+            let _ = app::append_ui_log(&store_root, "WINDOW_CREATED");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -1,4 +1,4 @@
-# Build a portable Windows folder and ZIP. No installer or system changes.
+﻿# Build a portable Windows folder and ZIP. No installer or system changes.
 param([switch]$SkipBuild)
 
 $ErrorActionPreference = 'Stop'
@@ -21,6 +21,9 @@ Copy-Item -LiteralPath (Join-Path $buildDir 'WebView2Loader.dll') -Destination $
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $outputDir -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot '使用说明.txt') -Destination $outputDir -Force
 $archive = Join-Path $projectRoot 'release\HeartWrite-Windows.zip'
+# 打包前实机启动验证：在脱离 MinGW 工具链的纯净环境下确认 HeartWrite.exe 能真正弹出主窗口并完成前端启动
+node (Join-Path $projectRoot 'tests\launch-smoke.mjs') --exe (Join-Path $outputDir 'HeartWrite.exe')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Compress-Archive -LiteralPath $outputDir -DestinationPath $archive -Force
 Write-Output "Portable app: $outputDir"
 Write-Output "ZIP: $archive"

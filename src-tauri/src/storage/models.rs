@@ -64,6 +64,62 @@ fn default_lan_port() -> u16 {
     19820
 }
 
+/// 兼容旧版配置把字号/宽高等整数字段写成浮点数（如 `"fontSize": 18.0`）的情况，
+/// 避免老用户升级后因 `settings.json` 反序列化失败而静默退回临时目录。
+fn deserialize_u32_lenient<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct LenientU32;
+    impl<'de> serde::de::Visitor<'de> for LenientU32 {
+        type Value = u32;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a non-negative integer or float")
+        }
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<u32, E> {
+            Ok(v.min(u32::MAX as u64) as u32)
+        }
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<u32, E> {
+            Ok(v.max(0).min(u32::MAX as i64) as u32)
+        }
+        fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<u32, E> {
+            if !v.is_finite() || v <= 0.0 {
+                Ok(0)
+            } else {
+                Ok(v.round().min(u32::MAX as f64) as u32)
+            }
+        }
+    }
+    deserializer.deserialize_any(LenientU32)
+}
+
+fn deserialize_usize_lenient<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct LenientUsize;
+    impl<'de> serde::de::Visitor<'de> for LenientUsize {
+        type Value = usize;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a non-negative integer or float")
+        }
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<usize, E> {
+            Ok(v.min(usize::MAX as u64) as usize)
+        }
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<usize, E> {
+            Ok(v.max(0).min(usize::MAX as i64) as usize)
+        }
+        fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<usize, E> {
+            if !v.is_finite() || v <= 0.0 {
+                Ok(0)
+            } else {
+                Ok(v.round().min(usize::MAX as f64) as usize)
+            }
+        }
+    }
+    deserializer.deserialize_any(LenientUsize)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AiProfile {
@@ -255,13 +311,19 @@ impl Default for LanSyncConfig {
 pub struct Settings {
     pub theme: String,
     pub font_family: String,
+    #[serde(deserialize_with = "deserialize_u32_lenient")]
     pub font_size: u32,
     pub line_height: f32,
     pub letter_spacing: f32,
+    #[serde(deserialize_with = "deserialize_u32_lenient")]
     pub autosave_secs: u32,
+    #[serde(deserialize_with = "deserialize_usize_lenient")]
     pub history_depth: usize,
+    #[serde(deserialize_with = "deserialize_usize_lenient")]
     pub snapshot_char_delta: usize,
+    #[serde(deserialize_with = "deserialize_u32_lenient")]
     pub editor_width: u32,
+    #[serde(deserialize_with = "deserialize_usize_lenient")]
     pub daily_goal: usize,
     pub last_book_id: String,
     /// 上次打开的章节 id（启动时用于直接定位到离开前那一章）。

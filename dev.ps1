@@ -1,4 +1,4 @@
-# 写心开发脚本：把工具链与构建命令固定到工作区内，避免依赖系统环境。
+﻿# 写心开发脚本：把工具链与构建命令固定到工作区内，避免依赖系统环境。
 #   用法： pwsh -File dev.ps1 check | build | run | test | smoke | release | clean
 #
 # 背景：MinGW 的 windres 无法处理带空格的路径（tauri-build 需要编译 Windows 资源），
@@ -71,6 +71,9 @@ switch ($Task) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     # 纯函数断言在应用内执行（--self-check），无需再启动测试可执行文件
     & $exe --self-check --data-dir (Join-Path $ws '.self-check-data')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # 真实桌面 GUI 启动验证：确认主窗口真正创建且 WebView2 完成前端 boot ok（零异常）
+    node (Join-Path $ws 'tests\launch-smoke.mjs') --exe $exe
     exit $LASTEXITCODE
   }
   'run'     { cargo run --manifest-path $manifest; exit $LASTEXITCODE }
